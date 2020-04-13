@@ -379,7 +379,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                     self.current.user_sid += dense_info.user_sid[self.data_idx];
 
                     Some(Info {
-                        version: dense_info.version[self.data_idx], // FIXME: optional with a default value of -1 - shouldn't we treat it as none?
+                        version: dense_info.version[self.data_idx],
                         timestamp: Some(self.current.timestamp),
                         changeset: Some(self.current.changeset),
                         uid: Some(self.current.uid),
