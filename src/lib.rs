@@ -384,7 +384,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                         changeset: Some(self.current.changeset),
                         uid: Some(self.current.uid),
                         user_sid: Some(self.current.user_sid as u32), // u32 in the non-dense Info, probably a bug in the specification
-                        visible: Some(*dense_info.visible.get(self.data_idx).unwrap_or(&true)), // TODO: only set if has HistoricalInformation
+                        visible: dense_info.visible.get(self.data_idx).cloned(),
                     })
                 },
                 None => None
