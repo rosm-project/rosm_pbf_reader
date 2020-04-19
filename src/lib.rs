@@ -16,6 +16,9 @@ use std::str;
 use std::str::Utf8Error;
 use std::convert::From;
 
+#[doc(hidden)]
+pub use proto::osmformat as pbf;
+
 /// OpenStreetMap PBF reader.
 ///
 /// An OSM PBF file is a sequence of blobs. These blobs can contain a 
@@ -50,14 +53,11 @@ pub enum BlobReadError {
     NoData,
 }
 
-pub type HeaderBlock<'a> = proto::osmformat::HeaderBlock<'a>;
-pub type PrimitiveBlock<'a> = proto::osmformat::PrimitiveBlock<'a>;
-
 pub enum Block<'a> {
     /// A raw OSMHeader block.
-    Header(HeaderBlock<'a>),
+    Header(pbf::HeaderBlock<'a>),
     /// A raw OSMData (primitive) block.
-    Primitive(PrimitiveBlock<'a>),
+    Primitive(pbf::PrimitiveBlock<'a>),
     /// An unknown block.
     Unknown(&'a [u8]),
 }
@@ -102,8 +102,8 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
     ///     }
     /// }
     ///
-    /// fn process_header_block(block: HeaderBlock) { ... }
-    /// fn process_primitive_block(block: PrimitiveBlock) { ... }
+    /// fn process_header_block(block: pbf::HeaderBlock) { ... }
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) { ... }
     /// ```
     pub fn new(pbf: Input) -> Self {
         PbfReader {
@@ -201,13 +201,13 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
 
                 let result = match block_type {
                     BlockType::Header => {
-                        match HeaderBlock::from_reader(&mut block_reader, &self.block_data) {
+                        match pbf::HeaderBlock::from_reader(&mut block_reader, &self.block_data) {
                             Ok(header_block) => Ok(Block::Header(header_block)),
                             Err(error) => Err(BlobReadError::PbfParseError(error)),
                         }
                     },
                     BlockType::Primitive => {
-                        match PrimitiveBlock::from_reader(&mut block_reader, &self.block_data) {
+                        match pbf::PrimitiveBlock::from_reader(&mut block_reader, &self.block_data) {
                             Ok(primitive_block) => Ok(Block::Primitive(primitive_block)),
                             Err(error) => Err(BlobReadError::PbfParseError(error)),
                         }
