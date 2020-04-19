@@ -16,6 +16,8 @@ use std::str;
 use std::str::Utf8Error;
 use std::convert::From;
 
+pub mod util;
+
 #[doc(hidden)]
 pub use proto::osmformat as pbf;
 
