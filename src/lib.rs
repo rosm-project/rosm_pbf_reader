@@ -27,7 +27,7 @@ pub use proto::osmformat as pbf;
 /// [`HeaderBlock`](type.HeaderBlock.html) (OSMHeader),
 /// a [`PrimitiveBlock`](type.PrimitiveBlock.html) (OSMData) or unknown data, in compressed or raw 
 /// form. `PbfReader` parses these blobs and returns them through its 
-/// [read_block](struct.PbfReader.html#method.read_block) method. 
+/// [`read_block`](struct.PbfReader.html#method.read_block) method. 
 /// 
 /// # Links
 ///
@@ -39,6 +39,7 @@ pub struct PbfReader<Input> {
     can_continue: bool,
 }
 
+/// Possible errors returned by [`PbfReader::read_block`](struct.PbfReader.html#method.read_block).
 #[derive(Debug)]
 pub enum BlobReadError {
     /// Returned when a PBF parse error has occured.
@@ -55,10 +56,11 @@ pub enum BlobReadError {
     NoData,
 }
 
+/// Result of [`PbfReader::read_block`](struct.PbfReader.html#method.read_block).
 pub enum Block<'a> {
-    /// A raw OSMHeader block.
+    /// A raw `OSMHeader` block.
     Header(pbf::HeaderBlock<'a>),
-    /// A raw OSMData (primitive) block.
+    /// A raw `OSMData` (primitive) block.
     Primitive(pbf::PrimitiveBlock<'a>),
     /// An unknown block.
     Unknown(&'a [u8]),
@@ -90,6 +92,7 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
     /// Constructs a new PBF reader.
     ///
     /// # Examples
+    ///
     /// ```
     /// let file = File::open("some.osm.pbf").unwrap();
     ///
@@ -117,7 +120,6 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
     }
 
     fn read_blob(&mut self) -> BlobReadResult {
-
         // Read blob header size
 
         let mut header_size_buffer = [0u8; 4];
@@ -129,7 +131,6 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
             };
         }
 
-        // FIXME: does "network byte order" always mean big endian?
         let blob_header_size = i32::from_be_bytes(header_size_buffer) as usize;
 
         if blob_header_size >= 64 * 1024 {
@@ -235,7 +236,7 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
 
 /// Utility for reading tags of dense nodes.
 ///
-/// See `tags` member of [DenseNode](struct.DenseNode.html).
+/// See [`DenseNode::tags`](struct.DenseNode.html#structfield.tags).
 pub struct DenseTagReader<'a> {
     string_table: &'a StringTable<'a>,
     indices_it: std::slice::Iter<'a, i32>,
@@ -307,7 +308,7 @@ impl<'a> Iterator for TagReader<'a> {
     }
 }
 
-/// An unpacked dense node.
+/// An unpacked dense node, returned when iterating on [`DenseNodeReader`](struct.DenseNodeReader.html).
 pub struct DenseNode<'a> {
     pub id: i64,
     pub lat: i64,
@@ -331,7 +332,7 @@ struct DeltaCodedValues {
 pub struct DenseNodeReader<'a> {
     data: &'a DenseNodes,
     string_table: &'a StringTable<'a>,
-    data_idx: usize, // 
+    data_idx: usize,
     key_value_idx: usize, // Starting index of the next node's keys/values
     current: DeltaCodedValues, // Current values of delta coded fields
 }
@@ -340,6 +341,7 @@ impl<'a> DenseNodeReader<'a> {
     /// Constructs a new `DenseNodeReader` from a slice of nodes.
     ///
     /// # Examples
+    ///
     /// ```
     /// for group in &block.primitivegroup {
     ///     if let Some(dense_nodes) = &group.dense {
@@ -432,6 +434,7 @@ impl<'a, T> DeltaValueReader<'a, T> where T: std::default::Default  {
     /// Constructs a new `DeltaValueReader` from a slice of values.
     ///
     /// # Examples
+    ///
     /// ```
     /// for group in &block.primitivegroup {
     ///     for way in &group.ways {
