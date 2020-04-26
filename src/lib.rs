@@ -235,7 +235,7 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
 
 /// Utility for reading tags of dense nodes.
 ///
-/// See `tags` member of [Node](struct.Node.html).
+/// See `tags` member of [DenseNode](struct.DenseNode.html).
 pub struct DenseTagReader<'a> {
     string_table: &'a StringTable<'a>,
     indices_it: std::slice::Iter<'a, i32>,
@@ -308,7 +308,7 @@ impl<'a> Iterator for TagReader<'a> {
 }
 
 /// An unpacked dense node.
-pub struct Node<'a> {
+pub struct DenseNode<'a> {
     pub id: i64,
     pub lat: i64,
     pub lon: i64,
@@ -364,9 +364,9 @@ impl<'a> DenseNodeReader<'a> {
 }
 
 impl<'a> Iterator for DenseNodeReader<'a> {
-    type Item = Node<'a>;
+    type Item = DenseNode<'a>;
 
-    fn next(&mut self) -> Option<Node<'a>> {
+    fn next(&mut self) -> Option<DenseNode<'a>> {
         if self.data_idx < self.data.id.len() {
             self.current.id += self.data.id[self.data_idx];
             self.current.lat += self.data.lat[self.data_idx];
@@ -406,7 +406,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
 
             self.data_idx += 1;
 
-            Some(Node {
+            Some(DenseNode {
                 id: self.current.id,
                 lat: self.current.lat,
                 lon: self.current.lon,
