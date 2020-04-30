@@ -93,7 +93,12 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
+    /// use rosm_pbf_reader::{PbfReader, Block};
+    /// use rosm_pbf_reader::pbf;
+    ///
+    /// use std::fs::File;
+    ///
     /// let file = File::open("some.osm.pbf").unwrap();
     ///
     /// let mut reader = PbfReader::new(file);
@@ -107,8 +112,8 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
     ///     }
     /// }
     ///
-    /// fn process_header_block(block: pbf::HeaderBlock) { ... }
-    /// fn process_primitive_block(block: pbf::PrimitiveBlock) { ... }
+    /// fn process_header_block(block: pbf::HeaderBlock) { /* ... */ }
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) { /* ... */ }
     /// ```
     pub fn new(pbf: Input) -> Self {
         PbfReader {
@@ -272,12 +277,18 @@ impl<'a> TagReader<'a> {
     /// Constructs a new `TagReader` from key and value index slices, and a corresponding string table.
     ///
     /// # Examples
-    /// ```
-    /// for group in &block.primitivegroup {
-    ///     for way in &group.ways {
-    ///         let tags = TagReader::new(&way.keys, &way.vals, &block.stringtable);
-    ///         for (key, value) in tags {
-    ///             println!("{}: {}", key.unwrap(), value.unwrap());
+    ///
+    /// ```no_run
+    /// use rosm_pbf_reader::TagReader;
+    /// use rosm_pbf_reader::pbf;
+    ///
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
+    ///     for group in &block.primitivegroup {
+    ///         for way in &group.ways {
+    ///             let tags = TagReader::new(&way.keys, &way.vals, &block.stringtable);
+    ///             for (key, value) in tags {
+    ///                 println!("{}: {}", key.unwrap(), value.unwrap());
+    ///             }
     ///         }
     ///     }
     /// }
@@ -342,13 +353,18 @@ impl<'a> DenseNodeReader<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// for group in &block.primitivegroup {
-    ///     if let Some(dense_nodes) = &group.dense {
-    ///         let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable);
-    ///         for node in nodes {
-    ///             for (key, value) in node.tags {
-    ///                 println!("{}: {}", key.unwrap(), value.unwrap());
+    /// ```no_run
+    /// use rosm_pbf_reader::DenseNodeReader;
+    /// use rosm_pbf_reader::pbf;
+    ///
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
+    ///     for group in &block.primitivegroup {
+    ///         if let Some(dense_nodes) = &group.dense {
+    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable);
+    ///             for node in nodes {
+    ///                 for (key, value) in node.tags {
+    ///                     println!("{}: {}", key.unwrap(), value.unwrap());
+    ///                 }
     ///             }
     ///         }
     ///     }
@@ -435,12 +451,17 @@ impl<'a, T> DeltaValueReader<'a, T> where T: std::default::Default  {
     ///
     /// # Examples
     ///
-    /// ```
-    /// for group in &block.primitivegroup {
-    ///     for way in &group.ways {
-    ///         let refs = DeltaValueReader::new(&way.refs);
-    ///         for ref in refs {
-    ///             println!("{}", ref);
+    /// ```no_run
+    /// use rosm_pbf_reader::DeltaValueReader;
+    /// use rosm_pbf_reader::pbf;
+    ///
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
+    ///     for group in &block.primitivegroup {
+    ///         for way in &group.ways {
+    ///             let refs = DeltaValueReader::new(&way.refs);
+    ///             for node_id in refs {
+    ///                 println!("{}", node_id);
+    ///             }
     ///         }
     ///     }
     /// }
