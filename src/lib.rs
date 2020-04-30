@@ -487,3 +487,24 @@ impl<'a, T> Iterator for DeltaValueReader<'a, T> where T: std::ops::AddAssign + 
         }
     }
 }
+
+#[cfg(test)]
+mod delta_value_reader_tests {
+    use super::*;
+
+    #[test]
+    fn empty_input() {
+        let mut reader = DeltaValueReader::new(&[] as &[i64]);
+        assert_eq!(reader.next(), None);
+    }
+
+    #[test]
+    fn valid_input() {
+        let values = [10, -1, 4, -2];
+        let mut reader = DeltaValueReader::new(&values);
+        assert_eq!(reader.next(), Some(10));
+        assert_eq!(reader.next(), Some(9));
+        assert_eq!(reader.next(), Some(13));
+        assert_eq!(reader.next(), Some(11));
+    }
+}
