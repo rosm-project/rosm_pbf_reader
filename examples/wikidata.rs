@@ -1,8 +1,9 @@
-use rosm_pbf_reader::{PbfReader, Block, HeaderBlock, PrimitiveBlock, TagReader, DenseNodeReader};
+use rosm_pbf_reader::{PbfReader, Block, TagReader, DenseNodeReader};
+use rosm_pbf_reader::pbf;
 
 use std::fs::File;
 
-fn print_header_block(block: HeaderBlock) {
+fn print_header_block(block: pbf::HeaderBlock) {
     if let Some(writing_program) = &block.writingprogram {
         println!("Writing program: {}", writing_program);
     }
@@ -14,7 +15,7 @@ fn print_wikidata_tag(key: &str, value: &str) {
     }
 }
 
-fn print_primitive_block(block: PrimitiveBlock) {
+fn print_primitive_block(block: pbf::PrimitiveBlock) {
     for group in &block.primitivegroup {
         let string_table = &block.stringtable;
 
