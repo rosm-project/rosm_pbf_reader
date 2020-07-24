@@ -7,14 +7,14 @@ use flate2::read::ZlibDecoder;
 use quick_protobuf::{BytesReader, MessageRead};
 
 mod proto;
-use proto::fileformat::{BlobHeader, Blob};
-use proto::osmformat::{DenseNodes, StringTable, Info};
+use proto::fileformat::{Blob, BlobHeader};
+use proto::osmformat::{DenseNodes, Info, StringTable};
 
+use std::convert::From;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::str;
 use std::str::Utf8Error;
-use std::convert::From;
 
 pub mod util;
 
@@ -23,19 +23,19 @@ pub use proto::osmformat as pbf;
 
 /// OpenStreetMap PBF reader.
 ///
-/// An OSM PBF file is a sequence of blobs. These blobs can contain a 
+/// An OSM PBF file is a sequence of blobs. These blobs can contain a
 /// [`HeaderBlock`](type.HeaderBlock.html) (OSMHeader),
-/// a [`PrimitiveBlock`](type.PrimitiveBlock.html) (OSMData) or unknown data, in compressed or raw 
-/// form. `PbfReader` parses these blobs and returns them through its 
-/// [`read_block`](struct.PbfReader.html#method.read_block) method. 
-/// 
+/// a [`PrimitiveBlock`](type.PrimitiveBlock.html) (OSMData) or unknown data, in compressed or raw
+/// form. `PbfReader` parses these blobs and returns them through its
+/// [`read_block`](struct.PbfReader.html#method.read_block) method.
+///
 /// # Links
 ///
 /// - [Official OSM PBF format documentation](https://wiki.openstreetmap.org/wiki/PBF_Format).
 pub struct PbfReader<Input> {
     pbf: Input,
     read_buffer: Vec<u8>, // Buffer used to read blob headers and blobs into
-    block_data: Vec<u8>, // Buffer for currently read block
+    block_data: Vec<u8>,  // Buffer for currently read block
     can_continue: bool,
 }
 
@@ -67,7 +67,7 @@ pub enum Block<'a> {
 }
 
 enum BlockType {
-    Header, 
+    Header,
     Primitive,
     Unknown,
 }
@@ -88,7 +88,10 @@ enum BlobReadResult {
     EndOfFile,
 }
 
-impl<Input> PbfReader<Input> where Input: std::io::Read {
+impl<Input> PbfReader<Input>
+where
+    Input: std::io::Read,
+{
     /// Constructs a new PBF reader.
     ///
     /// # Examples
@@ -182,7 +185,8 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
             BlobReadResult::Block(block_type)
         } else if let Some(zlib_data) = blob.zlib_data {
             let uncompressed_size = blob.raw_size.unwrap();
-            self.block_data.resize_with(uncompressed_size as usize, Default::default);
+            self.block_data
+                .resize_with(uncompressed_size as usize, Default::default);
 
             let mut decoder = ZlibDecoder::new(zlib_data.as_ref());
 
@@ -208,30 +212,26 @@ impl<Input> PbfReader<Input> where Input: std::io::Read {
                 let mut block_reader = BytesReader::from_bytes(&self.block_data);
 
                 let result = match block_type {
-                    BlockType::Header => {
-                        match pbf::HeaderBlock::from_reader(&mut block_reader, &self.block_data) {
-                            Ok(header_block) => Ok(Block::Header(header_block)),
-                            Err(error) => Err(BlobReadError::PbfParseError(error)),
-                        }
+                    BlockType::Header => match pbf::HeaderBlock::from_reader(&mut block_reader, &self.block_data) {
+                        Ok(header_block) => Ok(Block::Header(header_block)),
+                        Err(error) => Err(BlobReadError::PbfParseError(error)),
                     },
                     BlockType::Primitive => {
                         match pbf::PrimitiveBlock::from_reader(&mut block_reader, &self.block_data) {
                             Ok(primitive_block) => Ok(Block::Primitive(primitive_block)),
                             Err(error) => Err(BlobReadError::PbfParseError(error)),
                         }
-                    },
-                    BlockType::Unknown => {
-                        Ok(Block::Unknown(&self.block_data))
-                    },
+                    }
+                    BlockType::Unknown => Ok(Block::Unknown(&self.block_data)),
                 };
 
                 Some(result)
-            },
+            }
             BlobReadResult::Error(error) => {
                 self.can_continue = false;
                 Some(Err(error))
-            },
-            BlobReadResult::EndOfFile => { 
+            }
+            BlobReadResult::EndOfFile => {
                 self.can_continue = false;
                 None
             }
@@ -259,7 +259,7 @@ impl<'a> Iterator for DenseTagReader<'a> {
                 let value = str::from_utf8(self.string_table.s[*value_index as usize].as_ref());
 
                 Some((key, value))
-            },
+            }
             None => None,
         }
     }
@@ -344,7 +344,7 @@ pub struct DenseNodeReader<'a> {
     data: &'a DenseNodes,
     string_table: &'a StringTable<'a>,
     data_idx: usize,
-    key_value_idx: usize, // Starting index of the next node's keys/values
+    key_value_idx: usize,      // Starting index of the next node's keys/values
     current: DeltaCodedValues, // Current values of delta coded fields
 }
 
@@ -406,8 +406,8 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                         user_sid: Some(self.current.user_sid as u32), // u32 in the non-dense Info, probably a bug in the specification
                         visible: dense_info.visible.get(self.data_idx).cloned(),
                     })
-                },
-                None => None
+                }
+                None => None,
             };
 
             let key_value_start = self.key_value_idx;
@@ -419,7 +419,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 }
             }
 
-            let key_value_slice = &self.data.keys_vals[key_value_start..self.key_value_idx-1];
+            let key_value_slice = &self.data.keys_vals[key_value_start..self.key_value_idx - 1];
             assert!(key_value_slice.len() % 2 == 0);
 
             self.data_idx += 1;
@@ -446,7 +446,10 @@ pub struct DeltaValueReader<'a, T> {
     accumulated: T,
 }
 
-impl<'a, T> DeltaValueReader<'a, T> where T: std::default::Default  {
+impl<'a, T> DeltaValueReader<'a, T>
+where
+    T: std::default::Default,
+{
     /// Constructs a new `DeltaValueReader` from a slice of values.
     ///
     /// # Examples
@@ -474,7 +477,10 @@ impl<'a, T> DeltaValueReader<'a, T> where T: std::default::Default  {
     }
 }
 
-impl<'a, T> Iterator for DeltaValueReader<'a, T> where T: std::ops::AddAssign + std::clone::Clone {
+impl<'a, T> Iterator for DeltaValueReader<'a, T>
+where
+    T: std::ops::AddAssign + std::clone::Clone,
+{
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {

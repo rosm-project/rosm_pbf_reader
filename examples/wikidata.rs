@@ -1,5 +1,5 @@
-use rosm_pbf_reader::{PbfReader, Block, TagReader, DenseNodeReader};
 use rosm_pbf_reader::pbf;
+use rosm_pbf_reader::{Block, DenseNodeReader, PbfReader, TagReader};
 
 use std::fs::File;
 
@@ -39,7 +39,9 @@ fn print_primitive_block(block: pbf::PrimitiveBlock) {
 }
 
 fn main() {
-    let pbf_path = std::env::args().nth(1).expect("Expected an OSM PBF file as first argument");
+    let pbf_path = std::env::args()
+        .nth(1)
+        .expect("Expected an OSM PBF file as first argument");
 
     let file = File::open(pbf_path).unwrap();
 

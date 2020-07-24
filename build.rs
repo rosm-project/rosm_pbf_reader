@@ -1,8 +1,8 @@
 extern crate pb_rs;
 
-use std::path::{Path, PathBuf};
-use pb_rs::ConfigBuilder;
 use pb_rs::types::FileDescriptor;
+use pb_rs::ConfigBuilder;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let in_dir = PathBuf::from(::std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("proto");
@@ -12,7 +12,7 @@ fn main() {
         .iter()
         .map(|s| in_dir.join(s))
         .collect();
-    
+
     for file in &in_files {
         println!("cargo:rerun-if-changed={}", file.to_str().unwrap());
     }
@@ -26,7 +26,8 @@ fn main() {
 
     std::fs::DirBuilder::new().create(&out_dir).unwrap();
 
-    let config_builder = ConfigBuilder::new(&in_files, None, Some(&out_dir), &[in_dir]).unwrap()
+    let config_builder = ConfigBuilder::new(&in_files, None, Some(&out_dir), &[in_dir])
+        .unwrap()
         .headers(false)
         .single_module(true);
 
