@@ -1,17 +1,15 @@
 # rosm_pbf_reader
 
-A low-level Rust library for parsing [OpenStreetMap data in PBF format](https://wiki.openstreetmap.org/wiki/PBF_Format).
+A low-level Rust library for parsing OpenStreetMap data in [PBF format](https://wiki.openstreetmap.org/wiki/PBF_Format).
 
-Low-level means that:
- - This library provides the smallest possible API to work with OSM PBF files: a `PbfReader` to iterate on header/data blocks and some utilities to read delta encoded messages and properties. No other utilities are provided for further data processing (like filtering).
- - Most parse error are propagated to the user, the library tries to not panic on its own. It may panic on highly corrupted or invalid inputs though.
- - The library doesn't do any validation on the input data, except for checking blob header/data size.
+This library provides the smallest possible API to work with OSM PBF files: a blob reader, a block parser and some utilities to read delta or densely encoded data. No other utilities are provided for further data processing (like filtering). There's also no built-in parallelization, however block parsing (which is the most computation-heavy part of the process) can be easily dispatched to multiple threads.
 
-Parallel reading of a single input PBF is currently not in the scope of this library.
+The library uses [quick-protobuf](https://github.com/tafia/quick-protobuf) for fast protobuf parsing with minimal allocations.
 
-## Dependencies
+## Examples
 
-- [quick-protobuf](https://github.com/tafia/quick-protobuf) for protobuf parsing
+- `print_header` is a very simple example showing how to print the header block of an OSM PBF file.
+- `count_wikidata` is a more complete example showing multithreaded parsing, tag and dense node reading.
 
 ## Similar projects
 
