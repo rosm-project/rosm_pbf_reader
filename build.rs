@@ -1,5 +1,3 @@
-extern crate pb_rs;
-
 use pb_rs::types::FileDescriptor;
 use pb_rs::ConfigBuilder;
 use std::path::{Path, PathBuf};
@@ -29,6 +27,7 @@ fn main() {
     let config_builder = ConfigBuilder::new(&in_files, None, Some(&out_dir), &[in_dir])
         .unwrap()
         .headers(false)
+        .add_deprecated_fields(true)
         .single_module(true);
 
     FileDescriptor::run(&config_builder.build()).unwrap()

@@ -6,10 +6,10 @@ edition = "2018"
 
 [dependencies]
 flate2 = "1.0"
-quick-protobuf = "0.8"
+quick-protobuf = { git = "https://github.com/tafia/quick-protobuf.git", rev = "4caf51c40405ae6b3740251bac9172103aa73465" }
 
 [build-dependencies]
-pb-rs = "0.9"
+pb-rs = { git = "https://github.com/tafia/quick-protobuf.git", rev = "4caf51c40405ae6b3740251bac9172103aa73465" }
 
 [dev-dependencies]
 threadpool = "1.8"
