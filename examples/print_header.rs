@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut file = File::open(pbf_path).unwrap();
 
-    let mut block_parser = BlockParser::new();
+    let mut block_parser = BlockParser::default();
 
     while let Some(raw_block) = read_blob(&mut file) {
         let block = block_parser.parse_block(raw_block?)?;

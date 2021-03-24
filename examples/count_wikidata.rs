@@ -61,7 +61,7 @@ fn main() {
     let start = std::time::Instant::now();
 
     if thread_count == 1 {
-        let mut block_parser = BlockParser::new();
+        let mut block_parser = BlockParser::default();
 
         while let Some(result) = read_blob(&mut file) {
             match result {
@@ -82,7 +82,7 @@ fn main() {
         let thread_pool = ThreadPool::new(thread_count);
 
         // Make the parser thread local to reduce memory allocation count
-        thread_local!(static BLOCK_PARSER: RefCell<BlockParser> = RefCell::new(BlockParser::new()));
+        thread_local!(static BLOCK_PARSER: RefCell<BlockParser> = RefCell::new(BlockParser::default()));
 
         while let Some(result) = read_blob(&mut file) {
             match result {
