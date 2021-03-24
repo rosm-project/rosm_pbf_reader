@@ -14,6 +14,7 @@
 //!
 //! - [OSM PBF format documentation](https://wiki.openstreetmap.org/wiki/PBF_Format)
 
+#[cfg(feature = "default")]
 use flate2::read::ZlibDecoder;
 
 mod proto;
@@ -22,6 +23,7 @@ use proto::osmformat::{DenseNodes, Info, StringTable};
 use quick_protobuf::{BytesReader, MessageRead};
 
 use std::convert::From;
+#[cfg(feature = "default")]
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::str;
@@ -42,8 +44,8 @@ pub enum Error {
     InvalidBlobHeader,
     /// Returned when blob data with an invalid size (negative or >=32 MB) is encountered.
     InvalidBlobData,
-    /// Returned when an LZMA compressed blob is encountered.
-    UnsupportedCompression,
+    /// Returned when an error has occured during blob decompression.
+    DecompressionError(DecompressionError),
 }
 
 impl std::fmt::Display for Error {
@@ -160,20 +162,82 @@ where Input: std::io::Read
     Some(Ok(raw_block))
 }
 
+/// Blob compression method.
+pub enum CompressionMethod {
+    /// LZ4
+    Lz4,
+    /// LZMA
+    Lzma,
+    /// ZLib
+    Zlib,
+    /// Zstandard
+    Zstd,
+}
+
+/// Possible errors returned by [Decompressor] implementations.
+#[derive(Debug)]
+pub enum DecompressionError {
+    /// The given compression method isn't supported by the decompressor.
+    UnsupportedCompression,
+    /// An internal error occured during decompression.
+    InternalError(Box<dyn std::error::Error>),
+}
+
+/// Trait for custom decompression support.
+pub trait Decompressor {
+    /// Decompresses `input` blob into the preallocated `output` slice.
+    fn decompress(method: CompressionMethod, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionError>;
+}
+
+/// The default blob decompressor.
+///
+/// Supports ZLib decompression if default features are enabled.
+pub struct DefaultDecompressor;
+
+impl Decompressor for DefaultDecompressor {
+    #[cfg(feature = "default")]
+    fn decompress(method: CompressionMethod, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionError> {
+        match method {
+            CompressionMethod::Zlib => {
+                let mut decoder = ZlibDecoder::new(input.as_ref());
+
+                match decoder.read_exact(output) {
+                    Ok(_) => Ok(()),
+                    Err(error) => Err(DecompressionError::InternalError(Box::new(error))),
+                }
+            }
+            _ => Err(DecompressionError::UnsupportedCompression)
+        }
+    }
+
+    #[cfg(not(feature = "default"))]
+    fn decompress(_method: CompressionMethod, _input: &[u8], _output: &mut [u8]) -> Result<(), DecompressionError> {
+        Err(DecompressionError::UnsupportedCompression)
+    }
+}
+
 /// Parser with an internal buffer for `RawBlock`s.
 ///
 /// When multiple threads are used to speed up parsing, it's recommended to use a single 
 /// `BlockParser` per thread (e.g. by making it thread local), so its internal buffer remains
 /// alive, avoiding repeated memory allocations.
-pub struct BlockParser {
+pub struct BlockParser<D: Decompressor = DefaultDecompressor> {
     block_buffer: Vec<u8>,
+    decompressor: std::marker::PhantomData<D>,
 }
 
-impl BlockParser {
+impl Default for BlockParser {
+    fn default() -> Self {
+        BlockParser::<DefaultDecompressor>::new()
+    }
+}
+
+impl<D: Decompressor> BlockParser<D> {
     /// Creates a new `BlockParser`.
     pub fn new() -> Self {
         Self {
             block_buffer: Vec::new(),
+            decompressor: Default::default(),
         }
     }
 
@@ -189,20 +253,33 @@ impl BlockParser {
             Err(error) => return Err(Error::PbfParseError(error)),
         };
 
+        if let Some(uncompressed_size) = blob.raw_size {
+            self.block_buffer.resize_with(uncompressed_size as usize, Default::default);
+        }
+
         match blob.data {
             OneOfdata::raw(raw_data) => self.block_buffer.extend_from_slice(&raw_data),
             OneOfdata::zlib_data(zlib_data) => {
-                let uncompressed_size = blob.raw_size.unwrap();
-                self.block_buffer.resize_with(uncompressed_size as usize, Default::default);
-
-                let mut decoder = ZlibDecoder::new(zlib_data.as_ref());
-
-                if let Err(error) = decoder.read_exact(&mut self.block_buffer) {
-                    return Err(Error::IoError(error));
+                if let Err(error) = D::decompress(CompressionMethod::Zlib, &zlib_data, &mut self.block_buffer) {
+                    return Err(Error::DecompressionError(error));
+                }
+            }
+            OneOfdata::lz4_data(lz4_data) => {
+                if let Err(error) = D::decompress(CompressionMethod::Lz4, &lz4_data, &mut self.block_buffer) {
+                    return Err(Error::DecompressionError(error));
+                }
+            }
+            OneOfdata::lzma_data(lzma_data) => {
+                if let Err(error) = D::decompress(CompressionMethod::Lzma, &lzma_data, &mut self.block_buffer) {
+                    return Err(Error::DecompressionError(error));
+                }
+            }
+            OneOfdata::zstd_data(zstd_data) => {
+                if let Err(error) = D::decompress(CompressionMethod::Zstd, &zstd_data, &mut self.block_buffer) {
+                    return Err(Error::DecompressionError(error));
                 }
             }
             OneOfdata::OBSOLETE_bzip2_data(_) | OneOfdata::None => return Err(Error::InvalidBlobData),
-            _ => return Err(Error::UnsupportedCompression),
         }
 
         let mut block_reader = BytesReader::from_bytes(&self.block_buffer);
