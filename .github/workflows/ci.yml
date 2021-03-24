@@ -3,8 +3,14 @@ name: Continuous integration
 on: [push, pull_request]
 
 jobs:
-  build:
+  build_and_test:
+    name: Build and test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - --all-features
+          - --no-default-features
     steps:
     - name: Checkout
       uses: actions/checkout@v2
@@ -18,11 +24,14 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: check
+        args: ${{ matrix.features }}
     - name: Cargo build
       uses: actions-rs/cargo@v1
       with:
         command: build
+        args: ${{ matrix.features }}
     - name: Cargo test
       uses: actions-rs/cargo@v1
       with:
         command: test
+        args: ${{ matrix.features }}
