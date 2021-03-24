@@ -178,8 +178,10 @@ impl BlockParser {
     }
 
     /// Parses `raw_block` into a header, primitive or unknown block.
+    #[allow(deprecated)]
     pub fn parse_block(&mut self, raw_block: RawBlock) -> Result<Block, Error> {
         use proto::fileformat::Blob;
+        use proto::fileformat::mod_Blob::OneOfdata;
 
         let mut blob_reader = BytesReader::from_bytes(&raw_block.data);
         let blob = match Blob::from_reader(&mut blob_reader, &raw_block.data) {
@@ -187,21 +189,20 @@ impl BlockParser {
             Err(error) => return Err(Error::PbfParseError(error)),
         };
 
-        if let Some(raw_data) = blob.raw {
-            self.block_buffer.extend_from_slice(&raw_data);
-        } else if let Some(zlib_data) = blob.zlib_data {
-            let uncompressed_size = blob.raw_size.unwrap();
-            self.block_buffer.resize_with(uncompressed_size as usize, Default::default);
+        match blob.data {
+            OneOfdata::raw(raw_data) => self.block_buffer.extend_from_slice(&raw_data),
+            OneOfdata::zlib_data(zlib_data) => {
+                let uncompressed_size = blob.raw_size.unwrap();
+                self.block_buffer.resize_with(uncompressed_size as usize, Default::default);
 
-            let mut decoder = ZlibDecoder::new(zlib_data.as_ref());
+                let mut decoder = ZlibDecoder::new(zlib_data.as_ref());
 
-            if let Err(error) = decoder.read_exact(&mut self.block_buffer) {
-                return Err(Error::IoError(error));
+                if let Err(error) = decoder.read_exact(&mut self.block_buffer) {
+                    return Err(Error::IoError(error));
+                }
             }
-        } else if blob.lzma_data.is_some() {
-            return Err(Error::UnsupportedCompression);
-        } else {
-            return Err(Error::InvalidBlobData);
+            OneOfdata::OBSOLETE_bzip2_data(_) | OneOfdata::None => return Err(Error::InvalidBlobData),
+            _ => return Err(Error::UnsupportedCompression),
         }
 
         let mut block_reader = BytesReader::from_bytes(&self.block_buffer);
