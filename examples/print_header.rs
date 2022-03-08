@@ -1,4 +1,4 @@
-use rosm_pbf_reader::{read_blob, BlockParser, Block};
+use rosm_pbf_reader::{read_blob, Block, BlockParser};
 
 use std::fs::File;
 

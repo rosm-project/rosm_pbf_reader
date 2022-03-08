@@ -1,5 +1,5 @@
 use rosm_pbf_reader::pbf;
-use rosm_pbf_reader::{read_blob, BlockParser, Block, DenseNodeReader, TagReader};
+use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, TagReader};
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -47,9 +47,7 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) {
 fn main() {
     let mut args = std::env::args();
 
-    let pbf_path = args
-        .nth(1)
-        .expect("Expected an OSM PBF file as first argument");
+    let pbf_path = args.nth(1).expect("Expected an OSM PBF file as first argument");
 
     let thread_count: usize = match args.next() {
         Some(s) => s.parse().expect("Expected a thread count as second argument"),
@@ -65,16 +63,16 @@ fn main() {
 
         while let Some(result) = read_blob(&mut file) {
             match result {
-                Ok(raw_block) => {
-                    match block_parser.parse_block(raw_block) {
-                        Ok(block) => match block {
-                            Block::Header(header_block) => process_header_block(header_block),
-                            Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
-                            Block::Unknown(unknown_block) => println!("Skipping unknown block of size {}", unknown_block.len()),
+                Ok(raw_block) => match block_parser.parse_block(raw_block) {
+                    Ok(block) => match block {
+                        Block::Header(header_block) => process_header_block(header_block),
+                        Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
+                        Block::Unknown(unknown_block) => {
+                            println!("Skipping unknown block of size {}", unknown_block.len())
                         }
-                        Err(error) => println!("Error during parsing a block: {:?}", error),
-                    }
-                }
+                    },
+                    Err(error) => println!("Error during parsing a block: {:?}", error),
+                },
                 Err(error) => println!("Error during reading the next blob: {:?}", error),
             }
         }
@@ -95,8 +93,10 @@ fn main() {
                                 Ok(block) => match block {
                                     Block::Header(header_block) => process_header_block(header_block),
                                     Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
-                                    Block::Unknown(unknown_block) => println!("Skipping unknown block of size {}", unknown_block.len()),
-                                }
+                                    Block::Unknown(unknown_block) => {
+                                        println!("Skipping unknown block of size {}", unknown_block.len())
+                                    }
+                                },
                                 Err(error) => println!("Error during parsing a block: {:?}", error),
                             }
                         });
@@ -110,5 +110,9 @@ fn main() {
     }
 
     println!("Wikidata tag count: {}", WIKIDATA_COUNT.load(Ordering::SeqCst));
-    println!("Finished in {:.2}s on {} thread(s)", start.elapsed().as_secs_f64(), thread_count);
+    println!(
+        "Finished in {:.2}s on {} thread(s)",
+        start.elapsed().as_secs_f64(),
+        thread_count
+    );
 }

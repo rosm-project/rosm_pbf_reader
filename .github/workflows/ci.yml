@@ -20,6 +20,11 @@ jobs:
         profile: minimal
         toolchain: stable
         override: true
+    - name: Cargo format
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: --check
     - name: Cargo check
       uses: actions-rs/cargo@v1
       with:
