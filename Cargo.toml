@@ -6,13 +6,13 @@ edition = "2021"
 
 [dependencies]
 flate2 = { version = "1.0", optional = true }
-quick-protobuf = { git = "https://github.com/tafia/quick-protobuf.git", rev = "4caf51c40405ae6b3740251bac9172103aa73465" }
+prost = "0.10"
 
 [features]
 default = ["flate2"]
 
 [build-dependencies]
-pb-rs = { git = "https://github.com/tafia/quick-protobuf.git", rev = "4caf51c40405ae6b3740251bac9172103aa73465" }
+prost-build = "0.10"
 
 [dev-dependencies]
 threadpool = "1.8"

@@ -1,8 +1,7 @@
-use pb_rs::types::FileDescriptor;
-use pb_rs::ConfigBuilder;
+use std::io::Result;
 use std::path::{Path, PathBuf};
 
-fn main() {
+fn main() -> Result<()> {
     let in_dir = PathBuf::from(::std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("proto");
     println!("cargo:rerun-if-changed={}", in_dir.to_str().unwrap());
 
@@ -24,11 +23,9 @@ fn main() {
 
     std::fs::DirBuilder::new().create(&out_dir).unwrap();
 
-    let config_builder = ConfigBuilder::new(&in_files, None, Some(&out_dir), &[in_dir])
-        .unwrap()
-        .headers(false)
-        .add_deprecated_fields(true)
-        .single_module(true);
+    let mut prost_build = prost_build::Config::new();
+    prost_build.out_dir(&out_dir);
+    prost_build.compile_protos(&in_files, &[in_dir])?;
 
-    FileDescriptor::run(&config_builder.build()).unwrap()
+    Ok(())
 }

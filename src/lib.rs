@@ -17,10 +17,7 @@
 #[cfg(feature = "default")]
 use flate2::read::ZlibDecoder;
 
-mod proto;
-use proto::osmformat::{DenseNodes, Info, StringTable};
-
-use quick_protobuf::{BytesReader, MessageRead};
+use prost::Message;
 
 use std::convert::From;
 #[cfg(feature = "default")]
@@ -29,15 +26,14 @@ use std::io::ErrorKind;
 use std::str;
 use std::str::Utf8Error;
 
+pub mod pbf;
 pub mod util;
-
-pub use proto::osmformat as pbf;
 
 /// Possible errors returned by the library.
 #[derive(Debug)]
 pub enum Error {
     /// Returned when a PBF parse error has occured.
-    PbfParseError(quick_protobuf::Error),
+    PbfParseError(prost::DecodeError),
     /// Returned when reading from the input stream or decompression of blob data has failed.
     IoError(std::io::Error),
     /// Returned when a blob header with an invalid size (negative or >=64 KB) is encountered.
@@ -63,9 +59,9 @@ impl std::error::Error for Error {
 /// Result of [`BlockParser::parse_block`].
 pub enum Block<'a> {
     /// A raw `OSMHeader` block.
-    Header(pbf::HeaderBlock<'a>),
+    Header(pbf::HeaderBlock),
     /// A raw `OSMData` (primitive) block.
-    Primitive(pbf::PrimitiveBlock<'a>),
+    Primitive(pbf::PrimitiveBlock),
     /// An unknown block.
     Unknown(&'a [u8]),
 }
@@ -114,7 +110,7 @@ pub fn read_blob<Input>(pbf: &mut Input) -> Option<Result<RawBlock, Error>>
 where
     Input: std::io::Read,
 {
-    use proto::fileformat::BlobHeader;
+    use pbf::BlobHeader;
 
     let mut header_size_buffer = [0u8; 4];
 
@@ -136,13 +132,12 @@ where
         return Some(Err(Error::IoError(error)));
     }
 
-    let mut header_reader = BytesReader::from_bytes(&blob);
-    let blob_header = match BlobHeader::from_reader(&mut header_reader, &blob) {
+    let blob_header = match BlobHeader::decode(&*blob) {
         Ok(blob_header) => blob_header,
         Err(error) => return Some(Err(Error::PbfParseError(error))),
     };
 
-    let block_type = BlockType::from(blob_header.type_pb.as_ref());
+    let block_type = BlockType::from(blob_header.r#type.as_ref());
     let blob_size = blob_header.datasize;
 
     if !(0..32 * 1024 * 1024).contains(&blob_size) {
@@ -245,11 +240,7 @@ impl<D: Decompressor> BlockParser<D> {
     /// Parses `raw_block` into a header, primitive or unknown block.
     #[allow(deprecated)]
     pub fn parse_block(&mut self, raw_block: RawBlock) -> Result<Block, Error> {
-        use proto::fileformat::mod_Blob::OneOfdata;
-        use proto::fileformat::Blob;
-
-        let mut blob_reader = BytesReader::from_bytes(&raw_block.data);
-        let blob = match Blob::from_reader(&mut blob_reader, &raw_block.data) {
+        let blob = match pbf::Blob::decode(&*raw_block.data) {
             Ok(blob) => blob,
             Err(error) => return Err(Error::PbfParseError(error)),
         };
@@ -259,39 +250,41 @@ impl<D: Decompressor> BlockParser<D> {
                 .resize_with(uncompressed_size as usize, Default::default);
         }
 
-        match blob.data {
-            OneOfdata::raw(raw_data) => self.block_buffer.extend_from_slice(&raw_data),
-            OneOfdata::zlib_data(zlib_data) => {
-                if let Err(error) = D::decompress(CompressionMethod::Zlib, &zlib_data, &mut self.block_buffer) {
-                    return Err(Error::DecompressionError(error));
+        if let Some(blob_data) = blob.data {
+            match blob_data {
+                pbf::blob::Data::Raw(raw_data) => self.block_buffer.extend_from_slice(&raw_data),
+                pbf::blob::Data::ZlibData(zlib_data) => {
+                    if let Err(error) = D::decompress(CompressionMethod::Zlib, &zlib_data, &mut self.block_buffer) {
+                        return Err(Error::DecompressionError(error));
+                    }
                 }
-            }
-            OneOfdata::lz4_data(lz4_data) => {
-                if let Err(error) = D::decompress(CompressionMethod::Lz4, &lz4_data, &mut self.block_buffer) {
-                    return Err(Error::DecompressionError(error));
+                pbf::blob::Data::Lz4Data(lz4_data) => {
+                    if let Err(error) = D::decompress(CompressionMethod::Lz4, &lz4_data, &mut self.block_buffer) {
+                        return Err(Error::DecompressionError(error));
+                    }
                 }
-            }
-            OneOfdata::lzma_data(lzma_data) => {
-                if let Err(error) = D::decompress(CompressionMethod::Lzma, &lzma_data, &mut self.block_buffer) {
-                    return Err(Error::DecompressionError(error));
+                pbf::blob::Data::LzmaData(lzma_data) => {
+                    if let Err(error) = D::decompress(CompressionMethod::Lzma, &lzma_data, &mut self.block_buffer) {
+                        return Err(Error::DecompressionError(error));
+                    }
                 }
-            }
-            OneOfdata::zstd_data(zstd_data) => {
-                if let Err(error) = D::decompress(CompressionMethod::Zstd, &zstd_data, &mut self.block_buffer) {
-                    return Err(Error::DecompressionError(error));
+                pbf::blob::Data::ZstdData(zstd_data) => {
+                    if let Err(error) = D::decompress(CompressionMethod::Zstd, &zstd_data, &mut self.block_buffer) {
+                        return Err(Error::DecompressionError(error));
+                    }
                 }
+                pbf::blob::Data::ObsoleteBzip2Data(_) => return Err(Error::InvalidBlobData),
             }
-            OneOfdata::OBSOLETE_bzip2_data(_) | OneOfdata::None => return Err(Error::InvalidBlobData),
+        } else {
+            return Err(Error::InvalidBlobData);
         }
 
-        let mut block_reader = BytesReader::from_bytes(&self.block_buffer);
-
         match raw_block.r#type {
-            BlockType::Header => match pbf::HeaderBlock::from_reader(&mut block_reader, &self.block_buffer) {
+            BlockType::Header => match pbf::HeaderBlock::decode(&*self.block_buffer) {
                 Ok(header_block) => Ok(Block::Header(header_block)),
                 Err(error) => Err(Error::PbfParseError(error)),
             },
-            BlockType::Primitive => match pbf::PrimitiveBlock::from_reader(&mut block_reader, &self.block_buffer) {
+            BlockType::Primitive => match pbf::PrimitiveBlock::decode(&*self.block_buffer) {
                 Ok(primitive_block) => Ok(Block::Primitive(primitive_block)),
                 Err(error) => Err(Error::PbfParseError(error)),
             },
@@ -304,7 +297,7 @@ impl<D: Decompressor> BlockParser<D> {
 ///
 /// See [`DenseNode::tags`].
 pub struct DenseTagReader<'a> {
-    string_table: &'a StringTable<'a>,
+    string_table: &'a pbf::StringTable,
     indices_it: std::slice::Iter<'a, i32>,
 }
 
@@ -328,7 +321,7 @@ impl<'a> Iterator for DenseTagReader<'a> {
 
 /// Utility for reading tags.
 pub struct TagReader<'a> {
-    string_table: &'a StringTable<'a>,
+    string_table: &'a pbf::StringTable,
     key_indices: &'a [u32],
     value_indices: &'a [u32],
     idx: usize,
@@ -352,7 +345,7 @@ impl<'a> TagReader<'a> {
     ///         }
     ///     }
     /// }
-    pub fn new(key_indices: &'a [u32], value_indices: &'a [u32], string_table: &'a StringTable<'a>) -> Self {
+    pub fn new(key_indices: &'a [u32], value_indices: &'a [u32], string_table: &'a pbf::StringTable) -> Self {
         TagReader {
             string_table,
             key_indices,
@@ -385,7 +378,7 @@ pub struct DenseNode<'a> {
     pub lat: i64,
     pub lon: i64,
     pub tags: DenseTagReader<'a>,
-    pub info: Option<Info>,
+    pub info: Option<pbf::Info>,
 }
 
 #[derive(Default)]
@@ -401,8 +394,8 @@ struct DeltaCodedValues {
 
 /// Utility for reading delta-encoded dense nodes.
 pub struct DenseNodeReader<'a> {
-    data: &'a DenseNodes,
-    string_table: &'a StringTable<'a>,
+    data: &'a pbf::DenseNodes,
+    string_table: &'a pbf::StringTable,
     data_idx: usize,
     key_value_idx: usize,      // Starting index of the next node's keys/values
     current: DeltaCodedValues, // Current values of delta coded fields
@@ -429,7 +422,7 @@ impl<'a> DenseNodeReader<'a> {
     ///     }
     /// }
     /// ```
-    pub fn new(data: &'a DenseNodes, string_table: &'a StringTable<'a>) -> Self {
+    pub fn new(data: &'a pbf::DenseNodes, string_table: &'a pbf::StringTable) -> Self {
         DenseNodeReader {
             data,
             string_table,
@@ -457,8 +450,8 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                     self.current.uid += dense_info.uid[self.data_idx];
                     self.current.user_sid += dense_info.user_sid[self.data_idx];
 
-                    Some(Info {
-                        version: dense_info.version[self.data_idx],
+                    Some(pbf::Info {
+                        version: Some(dense_info.version[self.data_idx]),
                         timestamp: Some(self.current.timestamp),
                         changeset: Some(self.current.changeset),
                         uid: Some(self.current.uid),
