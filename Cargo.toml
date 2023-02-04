@@ -15,4 +15,6 @@ default = ["flate2"]
 prost-build = "0.11.6"
 
 [dev-dependencies]
+env_logger = "0.10.0"
+log = "0.4.17"
 threadpool = "1.8.1"
