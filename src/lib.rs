@@ -23,6 +23,9 @@ use std::convert::From;
 #[cfg(feature = "default")]
 use std::io::prelude::*;
 use std::io::ErrorKind;
+use std::iter::{Enumerate, Zip};
+use std::ops::AddAssign;
+use std::slice::Iter;
 use std::str;
 use std::str::Utf8Error;
 
@@ -42,6 +45,8 @@ pub enum Error {
     InvalidBlobData,
     /// Returned when an error has occured during blob decompression.
     DecompressionError(DecompressionError),
+    /// Returned when some assumption in the data is violated (for example, an out of bounds index is encountered).
+    LogicError(String),
 }
 
 impl std::fmt::Display for Error {
@@ -298,7 +303,7 @@ impl<D: Decompressor> BlockParser<D> {
 /// See [`DenseNode::tags`].
 pub struct DenseTagReader<'a> {
     string_table: &'a pbf::StringTable,
-    indices_it: std::slice::Iter<'a, i32>,
+    indices_it: Iter<'a, i32>,
 }
 
 impl<'a> Iterator for DenseTagReader<'a> {
@@ -389,14 +394,14 @@ struct DeltaCodedValues {
     timestamp: i64,
     changeset: i64,
     uid: i32,
-    user_sid: i32,
+    user_sid: u32,
 }
 
 /// Utility for reading delta-encoded dense nodes.
 pub struct DenseNodeReader<'a> {
     data: &'a pbf::DenseNodes,
     string_table: &'a pbf::StringTable,
-    data_idx: usize,
+    data_it: Enumerate<Zip<Iter<'a, i64>, Zip<Iter<'a, i64>, Iter<'a, i64>>>>, // (data_idx, (id_delta, (lat_delta, lon_delta))) iterator
     key_value_idx: usize,      // Starting index of the next node's keys/values
     current: DeltaCodedValues, // Current values of delta coded fields
 }
@@ -412,7 +417,7 @@ impl<'a> DenseNodeReader<'a> {
     /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
     ///     for group in &block.primitivegroup {
     ///         if let Some(dense_nodes) = &group.dense {
-    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable);
+    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable).expect("invalid dense nodes in PBF");
     ///             for node in nodes {
     ///                 for (key, value) in node.tags {
     ///                     println!("{}: {}", key.unwrap(), value.unwrap());
@@ -422,59 +427,96 @@ impl<'a> DenseNodeReader<'a> {
     ///     }
     /// }
     /// ```
-    pub fn new(data: &'a pbf::DenseNodes, string_table: &'a pbf::StringTable) -> Self {
-        DenseNodeReader {
-            data,
-            string_table,
-            data_idx: 0,
-            key_value_idx: 0,
-            current: DeltaCodedValues::default(),
+    pub fn new(data: &'a pbf::DenseNodes, string_table: &'a pbf::StringTable) -> Result<Self, Error> {
+        if data.lat.len() != data.id.len() || data.lon.len() != data.id.len() {
+            Err(Error::LogicError(format!(
+                "dense node id/lat/lon counts differ: {}/{}/{}",
+                data.id.len(),
+                data.lat.len(),
+                data.lon.len()
+            )))
+        } else {
+            let data_it = data.id.iter().zip(data.lat.iter().zip(data.lon.iter())).enumerate();
+
+            Ok(DenseNodeReader {
+                data,
+                string_table,
+                data_it,
+                key_value_idx: 0,
+                current: DeltaCodedValues::default(),
+            })
         }
+    }
+}
+
+fn delta_decode<T>(current: &mut T, delta: Option<&T>) -> Option<T>
+where
+    T: AddAssign<T> + Copy,
+{
+    match delta {
+        Some(delta) => {
+            *current += *delta;
+            Some(*current)
+        }
+        None => None,
     }
 }
 
 impl<'a> Iterator for DenseNodeReader<'a> {
     type Item = DenseNode<'a>;
 
-    fn next(&mut self) -> Option<DenseNode<'a>> {
-        if self.data_idx < self.data.id.len() {
-            self.current.id += self.data.id[self.data_idx];
-            self.current.lat += self.data.lat[self.data_idx];
-            self.current.lon += self.data.lon[self.data_idx];
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((data_idx, (id_delta, (lat_delta, lon_delta)))) = self.data_it.next() {
+            self.current.id += id_delta;
+            self.current.lat += lat_delta;
+            self.current.lon += lon_delta;
 
             let info = match &self.data.denseinfo {
                 Some(dense_info) => {
-                    // FIXME: seems like these arrays are always filled - it's not clear from the documentation if they can be empty or not
-                    self.current.timestamp += dense_info.timestamp[self.data_idx];
-                    self.current.changeset += dense_info.changeset[self.data_idx];
-                    self.current.uid += dense_info.uid[self.data_idx];
-                    self.current.user_sid += dense_info.user_sid[self.data_idx];
+                    let user_sid = match dense_info.user_sid.get(data_idx) {
+                        Some(user_sid_delta) => {
+                            self.current.user_sid = self
+                                .current
+                                .user_sid
+                                .checked_add_signed(*user_sid_delta)
+                                .expect("delta coded `user_sid` should result in a valid `u32`"); // FIXME: what to do in this case? Return an error?
+                            Some(self.current.user_sid)
+                        }
+                        None => None,
+                    };
 
                     Some(pbf::Info {
-                        version: Some(dense_info.version[self.data_idx]),
-                        timestamp: Some(self.current.timestamp),
-                        changeset: Some(self.current.changeset),
-                        uid: Some(self.current.uid),
-                        user_sid: Some(self.current.user_sid as u32), // u32 in the non-dense Info, an oversight in the specification
-                        visible: dense_info.visible.get(self.data_idx).cloned(),
+                        version: dense_info.version.get(data_idx).cloned(),
+                        timestamp: delta_decode(&mut self.current.timestamp, dense_info.timestamp.get(data_idx)),
+                        changeset: delta_decode(&mut self.current.changeset, dense_info.changeset.get(data_idx)),
+                        uid: delta_decode(&mut self.current.uid, dense_info.uid.get(data_idx)),
+                        user_sid,
+                        visible: dense_info.visible.get(data_idx).cloned(),
                     })
                 }
                 None => None,
             };
 
-            let key_value_start = self.key_value_idx;
+            let key_value_slice = if !self.data.keys_vals.is_empty() {
+                let next_zero = &self.data.keys_vals[self.key_value_idx..]
+                    .iter()
+                    .enumerate()
+                    .step_by(2)
+                    .find(|(_, string_idx)| **string_idx == 0);
 
-            for j in (self.key_value_idx..self.data.keys_vals.len()).step_by(2) {
-                if self.data.keys_vals[j] == 0 {
-                    self.key_value_idx = j + 1;
-                    break; // Node end
-                }
-            }
+                let next_zero_idx = if let Some((next_zero_idx, _)) = next_zero {
+                    self.key_value_idx + *next_zero_idx
+                } else {
+                    self.data.keys_vals.len()
+                };
 
-            let key_value_slice = &self.data.keys_vals[key_value_start..self.key_value_idx - 1];
-            assert!(key_value_slice.len() % 2 == 0);
+                let key_value_start = self.key_value_idx;
+                self.key_value_idx = next_zero_idx + 1;
 
-            self.data_idx += 1;
+                &self.data.keys_vals[key_value_start..self.key_value_idx - 1]
+            } else {
+                &[]
+            };
 
             Some(DenseNode {
                 id: self.current.id,
@@ -489,6 +531,112 @@ impl<'a> Iterator for DenseNodeReader<'a> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod dense_node_reader_tests {
+    use super::*;
+
+    #[test]
+    fn valid_input() {
+        let dense_info = pbf::DenseInfo {
+            user_sid: vec![i32::MAX, 1],
+            version: vec![2, 4],
+            timestamp: vec![2, 1],
+            changeset: vec![2, -1],
+            uid: vec![5, -1],
+            visible: vec![true, false],
+        };
+
+        let dense_nodes = pbf::DenseNodes {
+            id: vec![2, -1],
+            denseinfo: Some(dense_info),
+            lat: vec![-3, 1],
+            lon: vec![3, -1],
+            keys_vals: vec![1, 2, 0, 3, 4, 0],
+        };
+
+        let key_vals = ["", "key1", "val1", "key2", "val2"];
+        let mut string_table = pbf::StringTable::default();
+        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
+
+        let reader = DenseNodeReader::new(&dense_nodes, &string_table)
+            .expect("dense node reader should be created on valid data");
+        let mut result: Vec<DenseNode> = reader.collect();
+
+        assert_eq!(result.len(), 2);
+        let first = &mut result[0];
+        assert_eq!(first.id, 2);
+        assert_eq!(first.lat, -3);
+        assert_eq!(first.lon, 3);
+        assert_eq!(first.tags.next(), Some((Ok("key1"), Ok("val1"))));
+        assert_eq!(first.tags.next(), None);
+        let first_info = first.info.as_ref().unwrap();
+        assert_eq!(first_info.uid, Some(5));
+        assert_eq!(first_info.timestamp, Some(2));
+        assert_eq!(first_info.version, Some(2));
+        assert_eq!(first_info.changeset, Some(2));
+        assert_eq!(first_info.visible, Some(true));
+        assert_eq!(first_info.user_sid, Some(i32::MAX as u32));
+
+        let second = &mut result[1];
+        assert_eq!(second.id, 1);
+        assert_eq!(second.lat, -2);
+        assert_eq!(second.lon, 2);
+        assert_eq!(second.tags.next(), Some((Ok("key2"), Ok("val2"))));
+        assert_eq!(second.tags.next(), None);
+        let second_info = second.info.as_ref().unwrap();
+        assert_eq!(second_info.uid, Some(4));
+        assert_eq!(second_info.timestamp, Some(3));
+        assert_eq!(second_info.version, Some(4));
+        assert_eq!(second_info.changeset, Some(1));
+        assert_eq!(second_info.visible, Some(false));
+        assert_eq!(second_info.user_sid, Some(i32::MAX as u32 + 1));
+    }
+
+    #[test]
+    fn invalid_required_data_lengths() {
+        let dense_nodes = |id_count: usize, lat_count: usize, lon_count: usize| pbf::DenseNodes {
+            id: vec![0; id_count],
+            denseinfo: None,
+            lat: vec![0; lat_count],
+            lon: vec![0; lon_count],
+            keys_vals: vec![],
+        };
+
+        let string_table = pbf::StringTable::default();
+
+        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 0), &string_table).is_ok());
+        assert!(DenseNodeReader::new(&dense_nodes(1, 0, 0), &string_table).is_err());
+        assert!(DenseNodeReader::new(&dense_nodes(0, 1, 0), &string_table).is_err());
+        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 1), &string_table).is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_user_sid() {
+        let dense_info = pbf::DenseInfo {
+            user_sid: vec![0, -1],
+            ..Default::default()
+        };
+
+        let dense_nodes = pbf::DenseNodes {
+            id: vec![0, 0],
+            denseinfo: Some(dense_info),
+            lat: vec![0, 0],
+            lon: vec![0, 0],
+            keys_vals: vec![],
+        };
+
+        let string_table = pbf::StringTable::default();
+
+        let mut reader = DenseNodeReader::new(&dense_nodes, &string_table)
+            .expect("dense node reader should be created on valid data");
+
+        let next = reader.next();
+        assert!(next.is_some());
+        let _next = reader.next(); // Should panic as `user_sid` would become negative
     }
 }
 

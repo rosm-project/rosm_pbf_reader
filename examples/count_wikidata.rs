@@ -33,7 +33,7 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) {
         }
 
         if let Some(dense_nodes) = &group.dense {
-            let nodes = DenseNodeReader::new(&dense_nodes, string_table);
+            let nodes = DenseNodeReader::new(&dense_nodes, string_table).expect("invalid dense nodes in PBF");
 
             for node in nodes {
                 for (key, value) in node.tags {
