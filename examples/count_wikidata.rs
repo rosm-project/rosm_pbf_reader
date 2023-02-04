@@ -1,4 +1,4 @@
-use rosm_pbf_reader::pbf;
+use rosm_pbf_reader::{pbf, DenseTagReader};
 use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, Error, TagReader};
 
 use std::cell::RefCell;
@@ -33,11 +33,13 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
         }
 
         if let Some(dense_nodes) = &group.dense {
-            let nodes = DenseNodeReader::new(&dense_nodes, string_table)?;
+            let nodes = DenseNodeReader::new(&dense_nodes)?;
 
             for node in nodes {
-                for (key, value) in node?.tags {
-                    process_tag(key.unwrap(), value.unwrap());
+                let tags = DenseTagReader::new(string_table, node?.key_value_indices);
+
+                for (key, value) in tags {
+                    process_tag(key?, value?);
                 }
             }
         }

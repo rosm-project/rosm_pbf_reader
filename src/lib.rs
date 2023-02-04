@@ -300,12 +300,21 @@ impl<D: Decompressor> BlockParser<D> {
 
 /// Utility for reading tags of dense nodes.
 ///
-/// See [`DenseNode::tags`].
+/// See [`DenseNode::key_value_indices`].
 pub struct DenseTagReader<'a> {
     string_table: &'a pbf::StringTable,
 
-    /// Iterator of [key_index, value_index] slices
+    /// Iterator over [key_index, value_index] slices
     indices_it: ChunksExact<'a, i32>,
+}
+
+impl<'a> DenseTagReader<'a> {
+    pub fn new(string_table: &'a pbf::StringTable, key_value_indices: &'a [i32]) -> Self {
+        Self {
+            string_table,
+            indices_it: key_value_indices.chunks_exact(2),
+        }
+    }
 }
 
 impl<'a> Iterator for DenseTagReader<'a> {
@@ -345,6 +354,30 @@ impl<'a> Iterator for DenseTagReader<'a> {
             }
             None => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod dense_tag_reader_tests {
+    use super::*;
+
+    #[test]
+    fn valid_input() {
+        let key_vals = ["", "key1", "val1", "key2", "val2"];
+        let mut string_table = pbf::StringTable::default();
+        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
+
+        let key_value_indices = [1, 2];
+        let mut reader = DenseTagReader::new(&string_table, &key_value_indices);
+
+        match reader.next() {
+            Some(tags) => match tags {
+                (Ok("key1"), Ok("val1")) => {}
+                _ => assert!(false),
+            },
+            None => assert!(false),
+        }
+        assert!(reader.next().is_none());
     }
 }
 
@@ -404,10 +437,21 @@ impl<'a> Iterator for TagReader<'a> {
 /// An unpacked dense node, returned when iterating on [`DenseNodeReader`].
 pub struct DenseNode<'a> {
     pub id: i64,
+
+    /// Latitude of the node in an encoded format.
+    /// Use [`util::normalize_coord`] to convert it to nanodegrees.
     pub lat: i64,
+
+    /// Longitude of the node in an encoded format.
+    /// Use [`util::normalize_coord`] to convert it to nanodegrees.
     pub lon: i64,
-    pub tags: DenseTagReader<'a>,
+
+    /// Optional metadata.
     pub info: Option<pbf::Info>,
+
+    /// Key/value index slice of [`pbf::DenseNodes::keys_vals`]. Indices point into a [`pbf::StringTable`].
+    /// Use [`DenseTagReader`] to read these key/value pairs conveniently.
+    pub key_value_indices: &'a [i32],
 }
 
 #[derive(Default)]
@@ -424,7 +468,6 @@ struct DeltaCodedValues {
 /// Utility for reading delta-encoded dense nodes.
 pub struct DenseNodeReader<'a> {
     data: &'a pbf::DenseNodes,
-    string_table: &'a pbf::StringTable,
     data_it: Enumerate<Zip<Iter<'a, i64>, Zip<Iter<'a, i64>, Iter<'a, i64>>>>, // (data_idx, (id_delta, (lat_delta, lon_delta))) iterator
     key_value_idx: usize,      // Starting index of the next node's keys/values
     current: DeltaCodedValues, // Current values of delta coded fields
@@ -436,15 +479,16 @@ impl<'a> DenseNodeReader<'a> {
     /// # Examples
     ///
     /// ```no_run
-    /// use rosm_pbf_reader::{pbf, DenseNodeReader, Error};
+    /// use rosm_pbf_reader::{pbf, DenseNodeReader, DenseTagReader, Error};
     ///
     /// fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     ///     for group in &block.primitivegroup {
     ///         if let Some(dense_nodes) = &group.dense {
-    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable)?;
+    ///             let nodes = DenseNodeReader::new(&dense_nodes)?;
     ///             for node in nodes {
-    ///                 for (key, value) in node?.tags {
-    ///                     println!("{}: {}", key.unwrap(), value.unwrap());
+    ///                 let tags = DenseTagReader::new(&block.stringtable, node?.key_value_indices);
+    ///                 for (key, value) in tags {
+    ///                     println!("{}: {}", key?, value?);
     ///                 }
     ///             }
     ///         }
@@ -453,7 +497,7 @@ impl<'a> DenseNodeReader<'a> {
     ///     Ok(())
     /// }
     /// ```
-    pub fn new(data: &'a pbf::DenseNodes, string_table: &'a pbf::StringTable) -> Result<Self, Error> {
+    pub fn new(data: &'a pbf::DenseNodes) -> Result<Self, Error> {
         if data.lat.len() != data.id.len() || data.lon.len() != data.id.len() {
             Err(Error::LogicError(format!(
                 "dense node id/lat/lon counts differ: {}/{}/{}",
@@ -466,7 +510,6 @@ impl<'a> DenseNodeReader<'a> {
 
             Ok(DenseNodeReader {
                 data,
-                string_table,
                 data_it,
                 key_value_idx: 0,
                 current: DeltaCodedValues::default(),
@@ -526,7 +569,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 None => None,
             };
 
-            let key_value_slice = if !self.data.keys_vals.is_empty() {
+            let key_value_indices = if !self.data.keys_vals.is_empty() {
                 let next_zero = &self.data.keys_vals[self.key_value_idx..]
                     .iter()
                     .enumerate()
@@ -551,10 +594,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 id: self.current.id,
                 lat: self.current.lat,
                 lon: self.current.lon,
-                tags: DenseTagReader {
-                    string_table: self.string_table,
-                    indices_it: key_value_slice.chunks_exact(2),
-                },
+                key_value_indices,
                 info,
             }))
         } else {
@@ -586,12 +626,7 @@ mod dense_node_reader_tests {
             keys_vals: vec![1, 2, 0, 3, 4, 0],
         };
 
-        let key_vals = ["", "key1", "val1", "key2", "val2"];
-        let mut string_table = pbf::StringTable::default();
-        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
-
-        let reader = DenseNodeReader::new(&dense_nodes, &string_table)
-            .expect("dense node reader should be created on valid data");
+        let reader = DenseNodeReader::new(&dense_nodes).expect("dense node reader should be created on valid data");
         let mut result: Vec<DenseNode> = reader.filter_map(|r| r.ok()).collect();
 
         assert_eq!(result.len(), 2);
@@ -599,14 +634,7 @@ mod dense_node_reader_tests {
         assert_eq!(first.id, 2);
         assert_eq!(first.lat, -3);
         assert_eq!(first.lon, 3);
-        match first.tags.next() {
-            Some(tags) => match tags {
-                (Ok("key1"), Ok("val1")) => {}
-                _ => assert!(false),
-            },
-            None => assert!(false),
-        }
-        assert!(first.tags.next().is_none());
+        assert_eq!(first.key_value_indices, [1, 2]);
         let first_info = first.info.as_ref().unwrap();
         assert_eq!(first_info.uid, Some(5));
         assert_eq!(first_info.timestamp, Some(2));
@@ -619,14 +647,7 @@ mod dense_node_reader_tests {
         assert_eq!(second.id, 1);
         assert_eq!(second.lat, -2);
         assert_eq!(second.lon, 2);
-        match second.tags.next() {
-            Some(tags) => match tags {
-                (Ok("key2"), Ok("val2")) => {}
-                _ => assert!(false),
-            },
-            None => assert!(false),
-        }
-        assert!(second.tags.next().is_none());
+        assert_eq!(second.key_value_indices, [3, 4]);
         let second_info = second.info.as_ref().unwrap();
         assert_eq!(second_info.uid, Some(4));
         assert_eq!(second_info.timestamp, Some(3));
@@ -646,12 +667,10 @@ mod dense_node_reader_tests {
             keys_vals: vec![],
         };
 
-        let string_table = pbf::StringTable::default();
-
-        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 0), &string_table).is_ok());
-        assert!(DenseNodeReader::new(&dense_nodes(1, 0, 0), &string_table).is_err());
-        assert!(DenseNodeReader::new(&dense_nodes(0, 1, 0), &string_table).is_err());
-        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 1), &string_table).is_err());
+        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 0)).is_ok());
+        assert!(DenseNodeReader::new(&dense_nodes(1, 0, 0)).is_err());
+        assert!(DenseNodeReader::new(&dense_nodes(0, 1, 0)).is_err());
+        assert!(DenseNodeReader::new(&dense_nodes(0, 0, 1)).is_err());
     }
 
     #[test]
@@ -669,10 +688,7 @@ mod dense_node_reader_tests {
             keys_vals: vec![],
         };
 
-        let string_table = pbf::StringTable::default();
-
-        let mut reader = DenseNodeReader::new(&dense_nodes, &string_table)
-            .expect("dense node reader should be created on valid data");
+        let mut reader = DenseNodeReader::new(&dense_nodes).expect("dense node reader should be created on valid data");
 
         let next = reader.next();
         assert!(next.is_some());
