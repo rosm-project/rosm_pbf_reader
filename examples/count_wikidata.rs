@@ -1,6 +1,6 @@
 use log::{error, info, warn};
 
-use rosm_pbf_reader::{pbf, DenseTagReader};
+use rosm_pbf_reader::{pbf, DenseTagReader, RawBlock};
 use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, Error, TagReader};
 
 use std::cell::RefCell;
@@ -50,6 +50,24 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     Ok(())
 }
 
+fn parse_block(block_parser: &mut BlockParser, raw_block: RawBlock) {
+    match block_parser.parse_block(raw_block) {
+        Ok(block) => match block {
+            Block::Header(header_block) => process_header_block(header_block),
+            Block::Primitive(primitive_block) => match process_primitive_block(primitive_block) {
+                Err(error) => {
+                    error!("Error during processing a primitive block: {:?}", error)
+                }
+                _ => {}
+            },
+            Block::Unknown(unknown_block) => {
+                warn!("Skipping unknown block of size {}", unknown_block.len())
+            }
+        },
+        Err(error) => error!("Error during parsing a block: {:?}", error),
+    }
+}
+
 fn main() {
     let mut builder = env_logger::Builder::from_default_env();
     builder.filter_level(log::LevelFilter::Info);
@@ -73,19 +91,7 @@ fn main() {
 
         while let Some(result) = read_blob(&mut file) {
             match result {
-                Ok(raw_block) => match block_parser.parse_block(raw_block) {
-                    Ok(block) => match block {
-                        Block::Header(header_block) => process_header_block(header_block),
-                        Block::Primitive(primitive_block) => match process_primitive_block(primitive_block) {
-                            Err(error) => error!("Error during processing a primitive block: {:?}", error),
-                            _ => {}
-                        },
-                        Block::Unknown(unknown_block) => {
-                            warn!("Skipping unknown block of size {}", unknown_block.len())
-                        }
-                    },
-                    Err(error) => error!("Error during parsing a block: {:?}", error),
-                },
+                Ok(raw_block) => parse_block(&mut block_parser, raw_block),
                 Err(error) => error!("Error during reading the next blob: {:?}", error),
             }
         }
@@ -97,27 +103,11 @@ fn main() {
 
         while let Some(result) = read_blob(&mut file) {
             match result {
-                Ok(blob) => {
+                Ok(raw_block) => {
                     thread_pool.execute(move || {
                         BLOCK_PARSER.with(|block_parser| {
                             let mut block_parser = block_parser.borrow_mut();
-
-                            match block_parser.parse_block(blob) {
-                                Ok(block) => match block {
-                                    Block::Header(header_block) => process_header_block(header_block),
-                                    Block::Primitive(primitive_block) => match process_primitive_block(primitive_block)
-                                    {
-                                        Err(error) => {
-                                            error!("Error during processing a primitive block: {:?}", error)
-                                        }
-                                        _ => {}
-                                    },
-                                    Block::Unknown(unknown_block) => {
-                                        warn!("Skipping unknown block of size {}", unknown_block.len())
-                                    }
-                                },
-                                Err(error) => error!("Error during parsing a block: {:?}", error),
-                            }
+                            parse_block(&mut block_parser, raw_block);
                         });
                     });
                 }
