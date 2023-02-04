@@ -3,6 +3,11 @@ name = "rosm_pbf_reader"
 version = "0.4.0"
 authors = ["Zsolt Bölöny <bolony.zsolt@gmail.com>"]
 edition = "2021"
+license = "MIT"
+description = "A low-level Rust library for parsing OpenStreetMap data in PBF format"
+repository = "https://github.com/rosm-project/rosm_pbf_reader"
+keywords = ["osm", "openstreetmap", "osmpbf"]
+categories = ["parser-implementations", "encoding"]
 
 [dependencies]
 flate2 = { version = "1.0.25", optional = true }
