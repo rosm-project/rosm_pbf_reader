@@ -1,5 +1,5 @@
 use rosm_pbf_reader::pbf;
-use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, TagReader};
+use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, Error, TagReader};
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -21,7 +21,7 @@ fn process_tag(key: &str, _value: &str) {
     }
 }
 
-fn process_primitive_block(block: pbf::PrimitiveBlock) {
+fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     for group in &block.primitivegroup {
         let string_table = &block.stringtable;
 
@@ -33,15 +33,17 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) {
         }
 
         if let Some(dense_nodes) = &group.dense {
-            let nodes = DenseNodeReader::new(&dense_nodes, string_table).expect("invalid dense nodes in PBF");
+            let nodes = DenseNodeReader::new(&dense_nodes, string_table)?;
 
             for node in nodes {
-                for (key, value) in node.tags {
+                for (key, value) in node?.tags {
                     process_tag(key.unwrap(), value.unwrap());
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 fn main() {
@@ -66,7 +68,10 @@ fn main() {
                 Ok(raw_block) => match block_parser.parse_block(raw_block) {
                     Ok(block) => match block {
                         Block::Header(header_block) => process_header_block(header_block),
-                        Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
+                        Block::Primitive(primitive_block) => match process_primitive_block(primitive_block) {
+                            Err(error) => println!("Error during processing a primitive block: {:?}", error),
+                            _ => {}
+                        },
                         Block::Unknown(unknown_block) => {
                             println!("Skipping unknown block of size {}", unknown_block.len())
                         }
@@ -92,7 +97,13 @@ fn main() {
                             match block_parser.parse_block(blob) {
                                 Ok(block) => match block {
                                     Block::Header(header_block) => process_header_block(header_block),
-                                    Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
+                                    Block::Primitive(primitive_block) => match process_primitive_block(primitive_block)
+                                    {
+                                        Err(error) => {
+                                            println!("Error during processing a primitive block: {:?}", error)
+                                        }
+                                        _ => {}
+                                    },
                                     Block::Unknown(unknown_block) => {
                                         println!("Skipping unknown block of size {}", unknown_block.len())
                                     }

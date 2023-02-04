@@ -436,19 +436,21 @@ impl<'a> DenseNodeReader<'a> {
     /// # Examples
     ///
     /// ```no_run
-    /// use rosm_pbf_reader::{pbf, DenseNodeReader};
+    /// use rosm_pbf_reader::{pbf, DenseNodeReader, Error};
     ///
-    /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
+    /// fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     ///     for group in &block.primitivegroup {
     ///         if let Some(dense_nodes) = &group.dense {
-    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable).expect("invalid dense nodes in PBF");
+    ///             let nodes = DenseNodeReader::new(&dense_nodes, &block.stringtable)?;
     ///             for node in nodes {
-    ///                 for (key, value) in node.tags {
+    ///                 for (key, value) in node?.tags {
     ///                     println!("{}: {}", key.unwrap(), value.unwrap());
     ///                 }
     ///             }
     ///         }
     ///     }
+    ///
+    ///     Ok(())
     /// }
     /// ```
     pub fn new(data: &'a pbf::DenseNodes, string_table: &'a pbf::StringTable) -> Result<Self, Error> {
@@ -487,7 +489,7 @@ where
 }
 
 impl<'a> Iterator for DenseNodeReader<'a> {
-    type Item = DenseNode<'a>;
+    type Item = Result<DenseNode<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((data_idx, (id_delta, (lat_delta, lon_delta)))) = self.data_it.next() {
@@ -499,12 +501,15 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 Some(dense_info) => {
                     let user_sid = match dense_info.user_sid.get(data_idx) {
                         Some(user_sid_delta) => {
-                            self.current.user_sid = self
-                                .current
-                                .user_sid
-                                .checked_add_signed(*user_sid_delta)
-                                .expect("delta coded `user_sid` should result in a valid `u32`"); // FIXME: what to do in this case? Return an error?
-                            Some(self.current.user_sid)
+                            if let Some(current_user_sid) = self.current.user_sid.checked_add_signed(*user_sid_delta) {
+                                self.current.user_sid = current_user_sid;
+                                Some(self.current.user_sid)
+                            } else {
+                                return Some(Err(Error::LogicError(format!(
+                                    "delta decoding `user_sid` results in a negative integer: {}+{}",
+                                    self.current.user_sid, user_sid_delta
+                                ))));
+                            }
                         }
                         None => None,
                     };
@@ -542,7 +547,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 &[]
             };
 
-            Some(DenseNode {
+            Some(Ok(DenseNode {
                 id: self.current.id,
                 lat: self.current.lat,
                 lon: self.current.lon,
@@ -551,7 +556,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                     indices_it: key_value_slice.chunks_exact(2),
                 },
                 info,
-            })
+            }))
         } else {
             None
         }
@@ -587,7 +592,7 @@ mod dense_node_reader_tests {
 
         let reader = DenseNodeReader::new(&dense_nodes, &string_table)
             .expect("dense node reader should be created on valid data");
-        let mut result: Vec<DenseNode> = reader.collect();
+        let mut result: Vec<DenseNode> = reader.filter_map(|r| r.ok()).collect();
 
         assert_eq!(result.len(), 2);
         let first = &mut result[0];
@@ -650,7 +655,6 @@ mod dense_node_reader_tests {
     }
 
     #[test]
-    #[should_panic]
     fn invalid_user_sid() {
         let dense_info = pbf::DenseInfo {
             user_sid: vec![0, -1],
@@ -672,7 +676,9 @@ mod dense_node_reader_tests {
 
         let next = reader.next();
         assert!(next.is_some());
-        let _next = reader.next(); // Should panic as `user_sid` would become negative
+        let next = reader.next();
+        assert!(next.is_some());
+        assert!(next.unwrap().is_err());
     }
 }
 
