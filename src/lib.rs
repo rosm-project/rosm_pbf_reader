@@ -177,7 +177,7 @@ pub enum DecompressionError {
     /// The given compression method isn't supported by the decompressor.
     UnsupportedCompression,
     /// An internal error occured during decompression.
-    InternalError(Box<dyn std::error::Error>),
+    InternalError(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Trait for custom decompression support.
