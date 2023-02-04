@@ -25,7 +25,7 @@ use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::iter::{Enumerate, Zip};
 use std::ops::AddAssign;
-use std::slice::Iter;
+use std::slice::{ChunksExact, Iter};
 use std::str;
 use std::str::Utf8Error;
 
@@ -303,19 +303,43 @@ impl<D: Decompressor> BlockParser<D> {
 /// See [`DenseNode::tags`].
 pub struct DenseTagReader<'a> {
     string_table: &'a pbf::StringTable,
-    indices_it: Iter<'a, i32>,
+
+    /// Iterator of [key_index, value_index] slices
+    indices_it: ChunksExact<'a, i32>,
 }
 
 impl<'a> Iterator for DenseTagReader<'a> {
-    type Item = (Result<&'a str, Utf8Error>, Result<&'a str, Utf8Error>);
+    /// (tag key, tag value) pair
+    type Item = (Result<&'a str, Error>, Result<&'a str, Error>);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.indices_it.next() {
-            Some(key_index) => {
-                let key = str::from_utf8(self.string_table.s[*key_index as usize].as_ref());
+            Some(indices) => {
+                let decode_string = |index: i32| -> Result<&str, Error> {
+                    if let Ok(index) = TryInto::<usize>::try_into(index) {
+                        if let Some(bytes) = self.string_table.s.get(index) {
+                            if let Ok(utf8_string) = str::from_utf8(bytes) {
+                                Ok(utf8_string)
+                            } else {
+                                Err(Error::LogicError(format!(
+                                    "string at index {} is not valid UTF-8",
+                                    index
+                                )))
+                            }
+                        } else {
+                            Err(Error::LogicError(format!(
+                                "string table index {} is out of bounds ({})",
+                                index,
+                                self.string_table.s.len()
+                            )))
+                        }
+                    } else {
+                        Err(Error::LogicError(format!("string table index {} is invalid", index)))
+                    }
+                };
 
-                let value_index = self.indices_it.next()?;
-                let value = str::from_utf8(self.string_table.s[*value_index as usize].as_ref());
+                let key = decode_string(indices[0]);
+                let value = decode_string(indices[1]);
 
                 Some((key, value))
             }
@@ -524,7 +548,7 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                 lon: self.current.lon,
                 tags: DenseTagReader {
                     string_table: self.string_table,
-                    indices_it: key_value_slice.iter(),
+                    indices_it: key_value_slice.chunks_exact(2),
                 },
                 info,
             })
@@ -570,8 +594,14 @@ mod dense_node_reader_tests {
         assert_eq!(first.id, 2);
         assert_eq!(first.lat, -3);
         assert_eq!(first.lon, 3);
-        assert_eq!(first.tags.next(), Some((Ok("key1"), Ok("val1"))));
-        assert_eq!(first.tags.next(), None);
+        match first.tags.next() {
+            Some(tags) => match tags {
+                (Ok("key1"), Ok("val1")) => {}
+                _ => assert!(false),
+            },
+            None => assert!(false),
+        }
+        assert!(first.tags.next().is_none());
         let first_info = first.info.as_ref().unwrap();
         assert_eq!(first_info.uid, Some(5));
         assert_eq!(first_info.timestamp, Some(2));
@@ -584,8 +614,14 @@ mod dense_node_reader_tests {
         assert_eq!(second.id, 1);
         assert_eq!(second.lat, -2);
         assert_eq!(second.lon, 2);
-        assert_eq!(second.tags.next(), Some((Ok("key2"), Ok("val2"))));
-        assert_eq!(second.tags.next(), None);
+        match second.tags.next() {
+            Some(tags) => match tags {
+                (Ok("key2"), Ok("val2")) => {}
+                _ => assert!(false),
+            },
+            None => assert!(false),
+        }
+        assert!(second.tags.next().is_none());
         let second_info = second.info.as_ref().unwrap();
         assert_eq!(second_info.uid, Some(4));
         assert_eq!(second_info.timestamp, Some(3));
