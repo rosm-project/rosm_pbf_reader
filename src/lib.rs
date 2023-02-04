@@ -55,11 +55,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
+impl std::error::Error for Error {}
 
 /// Result of [`BlockParser::parse_block`].
 pub enum Block<'a> {
