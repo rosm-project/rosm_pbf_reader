@@ -1,7 +1,7 @@
 use log::{error, info, warn};
 
-use rosm_pbf_reader::{pbf, DenseTagReader, RawBlock};
-use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, Error, TagReader};
+use rosm_pbf_reader::dense::{DenseNodeReader, DenseTagReader};
+use rosm_pbf_reader::{pbf, read_blob, Block, BlockParser, Error, RawBlock, TagReader};
 
 use std::cell::RefCell;
 use std::fs::File;
