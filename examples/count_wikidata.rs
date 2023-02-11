@@ -1,5 +1,7 @@
-use rosm_pbf_reader::pbf;
-use rosm_pbf_reader::{read_blob, Block, BlockParser, DenseNodeReader, TagReader};
+use log::{error, info, warn};
+
+use rosm_pbf_reader::dense::{new_dense_tag_reader, DenseNodeReader};
+use rosm_pbf_reader::{new_tag_reader, pbf, read_blob, Block, BlockParser, Error, RawBlock};
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -11,7 +13,7 @@ static WIKIDATA_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn process_header_block(block: pbf::HeaderBlock) {
     if let Some(writing_program) = &block.writingprogram {
-        println!("Writing program: {}", writing_program);
+        info!("Writing program: {}", writing_program);
     }
 }
 
@@ -21,30 +23,56 @@ fn process_tag(key: &str, _value: &str) {
     }
 }
 
-fn process_primitive_block(block: pbf::PrimitiveBlock) {
+fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     for group in &block.primitivegroup {
         let string_table = &block.stringtable;
 
         for way in &group.ways {
-            let tags = TagReader::new(&way.keys, &way.vals, string_table);
+            let tags = new_tag_reader(string_table, &way.keys, &way.vals);
             for (key, value) in tags {
                 process_tag(key.unwrap(), value.unwrap());
             }
         }
 
         if let Some(dense_nodes) = &group.dense {
-            let nodes = DenseNodeReader::new(&dense_nodes, string_table);
+            let nodes = DenseNodeReader::new(&dense_nodes)?;
 
             for node in nodes {
-                for (key, value) in node.tags {
+                let tags = new_dense_tag_reader(string_table, node?.key_value_indices);
+
+                for (key, value) in tags {
                     process_tag(key.unwrap(), value.unwrap());
                 }
             }
         }
     }
+
+    Ok(())
+}
+
+fn parse_block(block_parser: &mut BlockParser, raw_block: RawBlock) {
+    match block_parser.parse_block(raw_block) {
+        Ok(block) => match block {
+            Block::Header(header_block) => process_header_block(header_block),
+            Block::Primitive(primitive_block) => match process_primitive_block(primitive_block) {
+                Err(error) => {
+                    error!("Error during processing a primitive block: {:?}", error)
+                }
+                _ => {}
+            },
+            Block::Unknown(unknown_block) => {
+                warn!("Skipping unknown block of size {}", unknown_block.len())
+            }
+        },
+        Err(error) => error!("Error during parsing a block: {:?}", error),
+    }
 }
 
 fn main() {
+    let mut builder = env_logger::Builder::from_default_env();
+    builder.filter_level(log::LevelFilter::Info);
+    builder.init();
+
     let mut args = std::env::args();
 
     let pbf_path = args.nth(1).expect("Expected an OSM PBF file as first argument");
@@ -63,17 +91,8 @@ fn main() {
 
         while let Some(result) = read_blob(&mut file) {
             match result {
-                Ok(raw_block) => match block_parser.parse_block(raw_block) {
-                    Ok(block) => match block {
-                        Block::Header(header_block) => process_header_block(header_block),
-                        Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
-                        Block::Unknown(unknown_block) => {
-                            println!("Skipping unknown block of size {}", unknown_block.len())
-                        }
-                    },
-                    Err(error) => println!("Error during parsing a block: {:?}", error),
-                },
-                Err(error) => println!("Error during reading the next blob: {:?}", error),
+                Ok(raw_block) => parse_block(&mut block_parser, raw_block),
+                Err(error) => error!("Error during reading the next blob: {:?}", error),
             }
         }
     } else {
@@ -84,33 +103,23 @@ fn main() {
 
         while let Some(result) = read_blob(&mut file) {
             match result {
-                Ok(blob) => {
+                Ok(raw_block) => {
                     thread_pool.execute(move || {
                         BLOCK_PARSER.with(|block_parser| {
                             let mut block_parser = block_parser.borrow_mut();
-
-                            match block_parser.parse_block(blob) {
-                                Ok(block) => match block {
-                                    Block::Header(header_block) => process_header_block(header_block),
-                                    Block::Primitive(primitive_block) => process_primitive_block(primitive_block),
-                                    Block::Unknown(unknown_block) => {
-                                        println!("Skipping unknown block of size {}", unknown_block.len())
-                                    }
-                                },
-                                Err(error) => println!("Error during parsing a block: {:?}", error),
-                            }
+                            parse_block(&mut block_parser, raw_block);
                         });
                     });
                 }
-                Err(error) => println!("Error during reading the next blob: {:?}", error),
+                Err(error) => error!("Error during reading the next blob: {:?}", error),
             }
         }
 
         thread_pool.join();
     }
 
-    println!("Wikidata tag count: {}", WIKIDATA_COUNT.load(Ordering::SeqCst));
-    println!(
+    info!("Wikidata tag count: {}", WIKIDATA_COUNT.load(Ordering::SeqCst));
+    info!(
         "Finished in {:.2}s on {} thread(s)",
         start.elapsed().as_secs_f64(),
         thread_count

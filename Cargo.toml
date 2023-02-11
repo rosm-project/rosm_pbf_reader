@@ -1,18 +1,25 @@
 [package]
 name = "rosm_pbf_reader"
-version = "0.4.0"
+version = "1.0.0"
 authors = ["Zsolt Bölöny <bolony.zsolt@gmail.com>"]
 edition = "2021"
+license = "MIT"
+description = "A low-level Rust library for parsing OpenStreetMap data in PBF format"
+repository = "https://github.com/rosm-project/rosm_pbf_reader"
+keywords = ["osm", "openstreetmap", "osmpbf"]
+categories = ["parser-implementations", "encoding"]
 
 [dependencies]
-flate2 = { version = "1.0", optional = true }
-prost = "0.10"
+flate2 = { version = "1.0.25", optional = true }
+prost = "0.11.6"
 
 [features]
 default = ["flate2"]
 
 [build-dependencies]
-prost-build = "0.10"
+prost-build = "0.11.6"
 
 [dev-dependencies]
-threadpool = "1.8"
+env_logger = "0.10.0"
+log = "0.4.17"
+threadpool = "1.8.1"
