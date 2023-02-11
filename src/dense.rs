@@ -1,11 +1,10 @@
 //! Helpers for reading dense nodes.
 
-use crate::{pbf, Error};
+use crate::{pbf, Error, TagReader};
 
 use std::iter::{Enumerate, Zip};
 use std::ops::AddAssign;
-use std::slice::{ChunksExact, Iter};
-use std::str;
+use std::slice::Iter;
 
 /// An unpacked dense node, returned when iterating on [`DenseNodeReader`].
 pub struct DenseNode<'a> {
@@ -53,14 +52,14 @@ impl<'a> DenseNodeReader<'a> {
     ///
     /// ```no_run
     /// use rosm_pbf_reader::{pbf, Error};
-    /// use rosm_pbf_reader::dense::{DenseNodeReader, DenseTagReader};
+    /// use rosm_pbf_reader::dense::{new_dense_tag_reader, DenseNodeReader};
     ///
     /// fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
     ///     for group in &block.primitivegroup {
     ///         if let Some(dense_nodes) = &group.dense {
     ///             let nodes = DenseNodeReader::new(&dense_nodes)?;
     ///             for node in nodes {
-    ///                 let tags = DenseTagReader::new(&block.stringtable, node?.key_value_indices);
+    ///                 let tags = new_dense_tag_reader(&block.stringtable, node?.key_value_indices);
     ///                 for (key, value) in tags {
     ///                     println!("{}: {}", key?, value?);
     ///                 }
@@ -272,85 +271,25 @@ mod dense_node_reader_tests {
     }
 }
 
-/// Utility for reading tags of dense nodes.
+/// Constructs a new `TagReader` from a dense key/value index slice, and a corresponding string table.
 ///
 /// See [`DenseNodeReader::new`] and [`DenseNode::key_value_indices`].
-pub struct DenseTagReader<'a> {
+pub fn new_dense_tag_reader<'a>(
     string_table: &'a pbf::StringTable,
+    key_value_indices: &'a [i32],
+) -> TagReader<'a, impl Iterator<Item = (Result<usize, Error>, Result<usize, Error>)> + 'a> {
+    TagReader {
+        string_table,
+        iter: key_value_indices.chunks_exact(2).map(|s| {
+            let convert_idx = |index: i32| -> Result<usize, Error> {
+                if let Ok(index) = TryInto::<usize>::try_into(index) {
+                    Ok(index)
+                } else {
+                    Err(Error::LogicError(format!("string table index {} is invalid", index)))
+                }
+            };
 
-    /// Iterator over [key_index, value_index] slices
-    indices_it: ChunksExact<'a, i32>,
-}
-
-impl<'a> DenseTagReader<'a> {
-    pub fn new(string_table: &'a pbf::StringTable, key_value_indices: &'a [i32]) -> Self {
-        Self {
-            string_table,
-            indices_it: key_value_indices.chunks_exact(2),
-        }
-    }
-}
-
-impl<'a> Iterator for DenseTagReader<'a> {
-    /// (tag key, tag value) pair
-    type Item = (Result<&'a str, Error>, Result<&'a str, Error>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.indices_it.next() {
-            Some(indices) => {
-                let decode_string = |index: i32| -> Result<&str, Error> {
-                    if let Ok(index) = TryInto::<usize>::try_into(index) {
-                        if let Some(bytes) = self.string_table.s.get(index) {
-                            if let Ok(utf8_string) = str::from_utf8(bytes) {
-                                Ok(utf8_string)
-                            } else {
-                                Err(Error::LogicError(format!(
-                                    "string at index {} is not valid UTF-8",
-                                    index
-                                )))
-                            }
-                        } else {
-                            Err(Error::LogicError(format!(
-                                "string table index {} is out of bounds ({})",
-                                index,
-                                self.string_table.s.len()
-                            )))
-                        }
-                    } else {
-                        Err(Error::LogicError(format!("string table index {} is invalid", index)))
-                    }
-                };
-
-                let key = decode_string(indices[0]);
-                let value = decode_string(indices[1]);
-
-                Some((key, value))
-            }
-            None => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod dense_tag_reader_tests {
-    use super::*;
-
-    #[test]
-    fn valid_input() {
-        let key_vals = ["", "key1", "val1", "key2", "val2"];
-        let mut string_table = pbf::StringTable::default();
-        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
-
-        let key_value_indices = [1, 2];
-        let mut reader = DenseTagReader::new(&string_table, &key_value_indices);
-
-        match reader.next() {
-            Some(tags) => match tags {
-                (Ok("key1"), Ok("val1")) => {}
-                _ => assert!(false),
-            },
-            None => assert!(false),
-        }
-        assert!(reader.next().is_none());
+            (convert_idx(s[0]), convert_idx(s[1]))
+        }),
     }
 }

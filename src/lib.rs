@@ -24,7 +24,6 @@ use std::convert::From;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::str;
-use std::str::Utf8Error;
 
 pub mod dense;
 pub mod pbf;
@@ -292,56 +291,129 @@ impl<D: Decompressor> BlockParser<D> {
     }
 }
 
-/// Utility for reading tags.
-pub struct TagReader<'a> {
+/// Generalized implementation for reading normal or densely encoded tags from string tables.
+///
+/// Use [`new_tag_reader`] or [`dense::new_dense_tag_reader`] to construct it.
+pub struct TagReader<'a, I>
+where
+    I: Iterator<Item = (Result<usize, Error>, Result<usize, Error>)>,
+{
     string_table: &'a pbf::StringTable,
-    key_indices: &'a [u32],
-    value_indices: &'a [u32],
-    idx: usize,
+    iter: I,
 }
 
-impl<'a> TagReader<'a> {
-    /// Constructs a new `TagReader` from key and value index slices, and a corresponding string table.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use rosm_pbf_reader::{pbf, TagReader};
-    ///
-    /// fn process_primitive_block(block: pbf::PrimitiveBlock) {
-    ///     for group in &block.primitivegroup {
-    ///         for way in &group.ways {
-    ///             let tags = TagReader::new(&way.keys, &way.vals, &block.stringtable);
-    ///             for (key, value) in tags {
-    ///                 println!("{}: {}", key.unwrap(), value.unwrap());
-    ///             }
-    ///         }
-    ///     }
-    /// }
-    pub fn new(key_indices: &'a [u32], value_indices: &'a [u32], string_table: &'a pbf::StringTable) -> Self {
-        TagReader {
-            string_table,
-            key_indices,
-            value_indices,
-            idx: 0,
+impl<'a, I> Iterator for TagReader<'a, I>
+where
+    I: Iterator<Item = (Result<usize, Error>, Result<usize, Error>)>,
+{
+    /// Tag as a (key, value) pair, containing either a string or an error if decoding has failed
+    type Item = (Result<&'a str, Error>, Result<&'a str, Error>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.iter.next() {
+            Some((key, value)) => {
+                let decode_string = |index: usize| -> Result<&str, Error> {
+                    if let Ok(index) = TryInto::<usize>::try_into(index) {
+                        if let Some(bytes) = self.string_table.s.get(index) {
+                            if let Ok(utf8_string) = str::from_utf8(bytes) {
+                                Ok(utf8_string)
+                            } else {
+                                Err(Error::LogicError(format!(
+                                    "string at index {} is not valid UTF-8",
+                                    index
+                                )))
+                            }
+                        } else {
+                            Err(Error::LogicError(format!(
+                                "string table index {} is out of bounds ({})",
+                                index,
+                                self.string_table.s.len()
+                            )))
+                        }
+                    } else {
+                        Err(Error::LogicError(format!("string table index {} is invalid", index)))
+                    }
+                };
+
+                let key = match key {
+                    Ok(key_idx) => decode_string(key_idx),
+                    Err(error) => Err(error),
+                };
+
+                let value = match value {
+                    Ok(value_idx) => decode_string(value_idx),
+                    Err(error) => Err(error),
+                };
+
+                Some((key, value))
+            }
+            None => None,
         }
     }
 }
 
-impl<'a> Iterator for TagReader<'a> {
-    type Item = (Result<&'a str, Utf8Error>, Result<&'a str, Utf8Error>);
+/// Constructs a new `TagReader` from key and value index slices, and a corresponding string table.
+///
+/// # Examples
+///
+/// ```no_run
+/// use rosm_pbf_reader::{pbf, new_tag_reader};
+///
+/// fn process_primitive_block(block: pbf::PrimitiveBlock) {
+///     for group in &block.primitivegroup {
+///         for way in &group.ways {
+///             let tags = new_tag_reader(&block.stringtable, &way.keys, &way.vals);
+///             for (key, value) in tags {
+///                 println!("{}: {}", key.unwrap(), value.unwrap());
+///             }
+///         }
+///     }
+/// }
+pub fn new_tag_reader<'a>(
+    string_table: &'a pbf::StringTable,
+    key_indices: &'a [u32],
+    value_indices: &'a [u32],
+) -> TagReader<'a, impl Iterator<Item = (Result<usize, Error>, Result<usize, Error>)> + 'a> {
+    TagReader {
+        string_table,
+        iter: key_indices
+            .iter()
+            .map(|i| Ok(*i as usize))
+            .zip(value_indices.iter().map(|i| Ok(*i as usize))),
+    }
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx < self.key_indices.len() {
-            let key = str::from_utf8(self.string_table.s[self.key_indices[self.idx] as usize].as_ref());
-            let value = str::from_utf8(self.string_table.s[self.value_indices[self.idx] as usize].as_ref());
+#[cfg(test)]
+mod tag_reader_tests {
+    use super::*;
 
-            self.idx += 1;
+    #[test]
+    fn valid_input() {
+        let key_vals = ["", "key1", "val1", "key2", "val2"];
+        let mut string_table = pbf::StringTable::default();
+        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
 
-            Some((key, value))
-        } else {
-            None
+        let key_indices = [1, 3];
+        let value_indices = [2, 4];
+        let mut reader = new_tag_reader(&string_table, &key_indices, &value_indices);
+
+        match reader.next() {
+            Some(tags) => match tags {
+                (Ok("key1"), Ok("val1")) => {}
+                _ => assert!(false),
+            },
+            None => assert!(false),
         }
+
+        match reader.next() {
+            Some(tags) => match tags {
+                (Ok("key2"), Ok("val2")) => {}
+                _ => assert!(false),
+            },
+            None => assert!(false),
+        }
+
+        assert!(reader.next().is_none());
     }
 }
 

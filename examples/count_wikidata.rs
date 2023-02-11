@@ -1,7 +1,7 @@
 use log::{error, info, warn};
 
-use rosm_pbf_reader::dense::{DenseNodeReader, DenseTagReader};
-use rosm_pbf_reader::{pbf, read_blob, Block, BlockParser, Error, RawBlock, TagReader};
+use rosm_pbf_reader::dense::{new_dense_tag_reader, DenseNodeReader};
+use rosm_pbf_reader::{new_tag_reader, pbf, read_blob, Block, BlockParser, Error, RawBlock};
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -28,7 +28,7 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
         let string_table = &block.stringtable;
 
         for way in &group.ways {
-            let tags = TagReader::new(&way.keys, &way.vals, string_table);
+            let tags = new_tag_reader(string_table, &way.keys, &way.vals);
             for (key, value) in tags {
                 process_tag(key.unwrap(), value.unwrap());
             }
@@ -38,10 +38,10 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
             let nodes = DenseNodeReader::new(&dense_nodes)?;
 
             for node in nodes {
-                let tags = DenseTagReader::new(string_table, node?.key_value_indices);
+                let tags = new_dense_tag_reader(string_table, node?.key_value_indices);
 
                 for (key, value) in tags {
-                    process_tag(key?, value?);
+                    process_tag(key.unwrap(), value.unwrap());
                 }
             }
         }
