@@ -1,6 +1,6 @@
 [package]
 name = "rosm_pbf_reader"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Zsolt Bölöny <bolony.zsolt@gmail.com>"]
 edition = "2021"
 license = "MIT"
@@ -10,16 +10,16 @@ keywords = ["osm", "openstreetmap", "osmpbf"]
 categories = ["parser-implementations", "encoding"]
 
 [dependencies]
-flate2 = { version = "1.0.25", optional = true }
-prost = "0.11.6"
+flate2 = { version = "1.0.28", optional = true }
+prost = "0.12.1"
 
 [features]
 default = ["flate2"]
 
 [build-dependencies]
-prost-build = "0.11.6"
+prost-build = "0.12.1"
 
 [dev-dependencies]
-env_logger = "0.10.0"
-log = "0.4.17"
+env_logger = "0.10.1"
+log = "0.4.20"
 threadpool = "1.8.1"
