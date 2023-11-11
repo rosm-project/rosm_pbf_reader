@@ -1,6 +1,6 @@
 [package]
 name = "rosm_pbf_reader"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Zsolt Bölöny <bolony.zsolt@gmail.com>"]
 edition = "2021"
 license = "MIT"
