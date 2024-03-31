@@ -48,7 +48,7 @@ pub enum Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -108,8 +108,6 @@ pub fn read_blob<Input>(pbf: &mut Input) -> Option<Result<RawBlock, Error>>
 where
     Input: std::io::Read,
 {
-    use pbf::BlobHeader;
-
     let mut header_size_buffer = [0u8; 4];
 
     if let Err(error) = pbf.read_exact(&mut header_size_buffer) {
@@ -119,33 +117,44 @@ where
         };
     }
 
-    let blob_header_size = i32::from_be_bytes(header_size_buffer);
+    Some(read_blob_inner(pbf, header_size_buffer))
+}
 
-    if !(0..64 * 1024).contains(&blob_header_size) {
-        return Some(Err(Error::InvalidBlobHeader));
+fn read_blob_inner<Input>(pbf: &mut Input, header_size_buffer: [u8; 4]) -> Result<RawBlock, Error>
+where
+    Input: std::io::Read,
+{
+    use pbf::BlobHeader;
+
+    let blob_header_size: usize = i32::from_be_bytes(header_size_buffer)
+        .try_into()
+        .map_err(|_err| Error::InvalidBlobHeader)?;
+
+    if blob_header_size >= 64 * 1024 {
+        return Err(Error::InvalidBlobHeader);
     }
 
-    let mut blob = vec![0u8; blob_header_size as usize];
+    let mut blob = vec![0u8; blob_header_size];
     if let Err(error) = pbf.read_exact(&mut blob) {
-        return Some(Err(Error::IoError(error)));
+        return Err(Error::IoError(error));
     }
 
     let blob_header = match BlobHeader::decode(&*blob) {
         Ok(blob_header) => blob_header,
-        Err(error) => return Some(Err(Error::PbfParseError(error))),
+        Err(error) => return Err(Error::PbfParseError(error)),
     };
 
     let block_type = BlockType::from(blob_header.r#type.as_ref());
-    let blob_size = blob_header.datasize;
+    let blob_size: usize = blob_header.datasize.try_into().map_err(|_err| Error::InvalidBlobData)?;
 
-    if !(0..32 * 1024 * 1024).contains(&blob_size) {
-        return Some(Err(Error::InvalidBlobData));
+    if blob_size >= 32 * 1024 * 1024 {
+        return Err(Error::InvalidBlobData);
     }
 
-    blob.resize_with(blob_size as usize, Default::default);
+    blob.resize_with(blob_size, Default::default);
 
     if let Err(error) = pbf.read_exact(&mut blob) {
-        return Some(Err(Error::IoError(error)));
+        return Err(Error::IoError(error));
     }
 
     let raw_block = RawBlock {
@@ -153,7 +162,7 @@ where
         data: blob,
     };
 
-    Some(Ok(raw_block))
+    Ok(raw_block)
 }
 
 /// Blob compression method.
@@ -193,7 +202,7 @@ impl Decompressor for DefaultDecompressor {
     fn decompress(method: CompressionMethod, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionError> {
         match method {
             CompressionMethod::Zlib => {
-                let mut decoder = ZlibDecoder::new(input.as_ref());
+                let mut decoder = ZlibDecoder::new(input);
 
                 match decoder.read_exact(output) {
                     Ok(_) => Ok(()),
@@ -236,6 +245,10 @@ impl<D: Decompressor> BlockParser<D> {
     }
 
     /// Parses `raw_block` into a header, primitive or unknown block.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if an error occurs during PBF parsing, decompression or validation.
     #[allow(deprecated)]
     pub fn parse_block(&mut self, raw_block: RawBlock) -> Result<Block, Error> {
         let blob = match pbf::Blob::decode(&*raw_block.data) {
@@ -244,8 +257,8 @@ impl<D: Decompressor> BlockParser<D> {
         };
 
         if let Some(uncompressed_size) = blob.raw_size {
-            self.block_buffer
-                .resize_with(uncompressed_size as usize, Default::default);
+            let uncompressed_size: usize = uncompressed_size.try_into().map_err(|_err| Error::InvalidBlobData)?;
+            self.block_buffer.resize_with(uncompressed_size, Default::default);
         }
 
         if let Some(blob_data) = blob.data {
@@ -318,20 +331,16 @@ where
                             if let Ok(utf8_string) = str::from_utf8(bytes) {
                                 Ok(utf8_string)
                             } else {
-                                Err(Error::LogicError(format!(
-                                    "string at index {} is not valid UTF-8",
-                                    index
-                                )))
+                                Err(Error::LogicError(format!("string at index {index} is not valid UTF-8")))
                             }
                         } else {
                             Err(Error::LogicError(format!(
-                                "string table index {} is out of bounds ({})",
-                                index,
+                                "string table index {index} is out of bounds ({})",
                                 self.string_table.s.len()
                             )))
                         }
                     } else {
-                        Err(Error::LogicError(format!("string table index {} is invalid", index)))
+                        Err(Error::LogicError(format!("string table index {index} is invalid")))
                     }
                 };
 
@@ -390,28 +399,16 @@ mod tag_reader_tests {
     #[test]
     fn valid_input() {
         let key_vals = ["", "key1", "val1", "key2", "val2"];
-        let mut string_table = pbf::StringTable::default();
-        string_table.s = key_vals.iter().map(|s| s.as_bytes().to_vec()).collect();
+        let string_table = pbf::StringTable {
+            s: key_vals.iter().map(|s| s.as_bytes().to_vec()).collect(),
+        };
 
         let key_indices = [1, 3];
         let value_indices = [2, 4];
         let mut reader = new_tag_reader(&string_table, &key_indices, &value_indices);
 
-        match reader.next() {
-            Some(tags) => match tags {
-                (Ok("key1"), Ok("val1")) => {}
-                _ => assert!(false),
-            },
-            None => assert!(false),
-        }
-
-        match reader.next() {
-            Some(tags) => match tags {
-                (Ok("key2"), Ok("val2")) => {}
-                _ => assert!(false),
-            },
-            None => assert!(false),
-        }
+        matches!(reader.next(), Some((Ok("key1"), Ok("val1"))));
+        matches!(reader.next(), Some((Ok("key2"), Ok("val2"))));
 
         assert!(reader.next().is_none());
     }

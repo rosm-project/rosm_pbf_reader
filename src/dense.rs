@@ -37,12 +37,15 @@ struct DeltaCodedValues {
     user_sid: u32,
 }
 
+type IdDeltaIt<'a> = Iter<'a, i64>;
+type LatLonDeltaIt<'a> = Zip<Iter<'a, i64>, Iter<'a, i64>>;
+
 /// Utility for reading delta-encoded dense nodes.
 pub struct DenseNodeReader<'a> {
     data: &'a pbf::DenseNodes,
-    data_it: Enumerate<Zip<Iter<'a, i64>, Zip<Iter<'a, i64>, Iter<'a, i64>>>>, // (data_idx, (id_delta, (lat_delta, lon_delta))) iterator
-    key_value_idx: usize,      // Starting index of the next node's keys/values
-    current: DeltaCodedValues, // Current values of delta coded fields
+    data_it: Enumerate<Zip<IdDeltaIt<'a>, LatLonDeltaIt<'a>>>, // (data_idx, (id_delta, (lat_delta, lon_delta))) iterator
+    key_value_idx: usize,                                      // Starting index of the next node's keys/values
+    current: DeltaCodedValues,                                 // Current values of delta coded fields
 }
 
 impl<'a> DenseNodeReader<'a> {
@@ -70,6 +73,10 @@ impl<'a> DenseNodeReader<'a> {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if the latitude, longitude and ID counts in `data` do not match.
     pub fn new(data: &'a pbf::DenseNodes) -> Result<Self, Error> {
         if data.lat.len() != data.id.len() || data.lon.len() != data.id.len() {
             Err(Error::LogicError(format!(
@@ -131,12 +138,12 @@ impl<'a> Iterator for DenseNodeReader<'a> {
                     };
 
                     Some(pbf::Info {
-                        version: dense_info.version.get(data_idx).cloned(),
+                        version: dense_info.version.get(data_idx).copied(),
                         timestamp: delta_decode(&mut self.current.timestamp, dense_info.timestamp.get(data_idx)),
                         changeset: delta_decode(&mut self.current.changeset, dense_info.changeset.get(data_idx)),
                         uid: delta_decode(&mut self.current.uid, dense_info.uid.get(data_idx)),
                         user_sid,
-                        visible: dense_info.visible.get(data_idx).cloned(),
+                        visible: dense_info.visible.get(data_idx).copied(),
                     })
                 }
                 None => None,
@@ -176,6 +183,29 @@ impl<'a> Iterator for DenseNodeReader<'a> {
     }
 }
 
+/// Constructs a new `TagReader` from a dense key/value index slice, and a corresponding string table.
+///
+/// See [`DenseNodeReader::new`] and [`DenseNode::key_value_indices`].
+pub fn new_dense_tag_reader<'a>(
+    string_table: &'a pbf::StringTable,
+    key_value_indices: &'a [i32],
+) -> TagReader<'a, impl Iterator<Item = (Result<usize, Error>, Result<usize, Error>)> + 'a> {
+    TagReader {
+        string_table,
+        iter: key_value_indices.chunks_exact(2).map(|s| {
+            let convert_idx = |index: i32| -> Result<usize, Error> {
+                if let Ok(index) = TryInto::<usize>::try_into(index) {
+                    Ok(index)
+                } else {
+                    Err(Error::LogicError(format!("string table index {index} is invalid")))
+                }
+            };
+
+            (convert_idx(s[0]), convert_idx(s[1]))
+        }),
+    }
+}
+
 #[cfg(test)]
 mod dense_node_reader_tests {
     use super::*;
@@ -200,7 +230,7 @@ mod dense_node_reader_tests {
         };
 
         let reader = DenseNodeReader::new(&dense_nodes).expect("dense node reader should be created on valid data");
-        let mut result: Vec<DenseNode> = reader.filter_map(|r| r.ok()).collect();
+        let mut result: Vec<DenseNode> = reader.filter_map(Result::ok).collect();
 
         assert_eq!(result.len(), 2);
         let first = &mut result[0];
@@ -268,28 +298,5 @@ mod dense_node_reader_tests {
         let next = reader.next();
         assert!(next.is_some());
         assert!(next.unwrap().is_err());
-    }
-}
-
-/// Constructs a new `TagReader` from a dense key/value index slice, and a corresponding string table.
-///
-/// See [`DenseNodeReader::new`] and [`DenseNode::key_value_indices`].
-pub fn new_dense_tag_reader<'a>(
-    string_table: &'a pbf::StringTable,
-    key_value_indices: &'a [i32],
-) -> TagReader<'a, impl Iterator<Item = (Result<usize, Error>, Result<usize, Error>)> + 'a> {
-    TagReader {
-        string_table,
-        iter: key_value_indices.chunks_exact(2).map(|s| {
-            let convert_idx = |index: i32| -> Result<usize, Error> {
-                if let Ok(index) = TryInto::<usize>::try_into(index) {
-                    Ok(index)
-                } else {
-                    Err(Error::LogicError(format!("string table index {} is invalid", index)))
-                }
-            };
-
-            (convert_idx(s[0]), convert_idx(s[1]))
-        }),
     }
 }

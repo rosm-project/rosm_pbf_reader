@@ -14,12 +14,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(raw_block) = read_blob(&mut file) {
         let block = block_parser.parse_block(raw_block?)?;
 
-        match block {
-            Block::Header(header_block) => {
-                println!("{:#?}", header_block);
-                break;
-            }
-            _ => {}
+        if let Block::Header(header_block) = block {
+            println!("{:#?}", header_block);
+            break;
         }
     }
 

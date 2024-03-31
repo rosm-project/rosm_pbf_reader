@@ -2,6 +2,9 @@ name: continuous-integration
 
 on: [push, pull_request]
 
+env:
+  RUSTFLAGS: "-Dwarnings"
+
 jobs:
   build_and_test:
     name: Build and test
@@ -28,3 +31,5 @@ jobs:
       run: cargo build ${{ matrix.features }}
     - name: Test
       run: cargo test ${{ matrix.features }}
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features
