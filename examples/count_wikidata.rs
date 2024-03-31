@@ -35,7 +35,7 @@ fn process_primitive_block(block: pbf::PrimitiveBlock) -> Result<(), Error> {
         }
 
         if let Some(dense_nodes) = &group.dense {
-            let nodes = DenseNodeReader::new(&dense_nodes)?;
+            let nodes = DenseNodeReader::new(dense_nodes)?;
 
             for node in nodes {
                 let tags = new_dense_tag_reader(string_table, node?.key_value_indices);
@@ -54,17 +54,16 @@ fn parse_block(block_parser: &mut BlockParser, raw_block: RawBlock) {
     match block_parser.parse_block(raw_block) {
         Ok(block) => match block {
             Block::Header(header_block) => process_header_block(header_block),
-            Block::Primitive(primitive_block) => match process_primitive_block(primitive_block) {
-                Err(error) => {
-                    error!("Error during processing a primitive block: {:?}", error)
+            Block::Primitive(primitive_block) => {
+                if let Err(error) = process_primitive_block(primitive_block) {
+                    error!("Error during processing a primitive block: {error:?}")
                 }
-                _ => {}
-            },
+            }
             Block::Unknown(unknown_block) => {
                 warn!("Skipping unknown block of size {}", unknown_block.len())
             }
         },
-        Err(error) => error!("Error during parsing a block: {:?}", error),
+        Err(error) => error!("Error during parsing a block: {error:?}"),
     }
 }
 
