@@ -10,16 +10,16 @@ keywords = ["osm", "openstreetmap", "osmpbf"]
 categories = ["parser-implementations", "encoding"]
 
 [dependencies]
-flate2 = { version = "1.0.28", optional = true }
-prost = "0.12.3"
+flate2 = { version = "1.1.0", optional = true }
+prost = "0.13.5"
 
 [features]
 default = ["flate2"]
 
 [build-dependencies]
-prost-build = "0.12.3"
+prost-build = "0.13.5"
 
 [dev-dependencies]
-env_logger = "0.11.3"
-log = "0.4.21"
+env_logger = "0.11.6"
+log = "0.4.26"
 threadpool = "1.8.1"
