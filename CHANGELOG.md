@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2025-03-08
+### Changed
+- Updated dependencies
+
+### Fixed
+- Some new Clippy warnings
+
 ## [1.0.2] - 2024-03-31
 ### Added
 - Clippy step to CI

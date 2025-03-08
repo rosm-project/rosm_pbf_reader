@@ -14,6 +14,8 @@
 //!
 //! - [OSM PBF format documentation](https://wiki.openstreetmap.org/wiki/PBF_Format)
 
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "default")]
 use flate2::read::ZlibDecoder;
 
@@ -326,21 +328,17 @@ where
         match self.iter.next() {
             Some((key, value)) => {
                 let decode_string = |index: usize| -> Result<&str, Error> {
-                    if let Ok(index) = TryInto::<usize>::try_into(index) {
-                        if let Some(bytes) = self.string_table.s.get(index) {
-                            if let Ok(utf8_string) = str::from_utf8(bytes) {
-                                Ok(utf8_string)
-                            } else {
-                                Err(Error::LogicError(format!("string at index {index} is not valid UTF-8")))
-                            }
+                    if let Some(bytes) = self.string_table.s.get(index) {
+                        if let Ok(utf8_string) = str::from_utf8(bytes) {
+                            Ok(utf8_string)
                         } else {
-                            Err(Error::LogicError(format!(
-                                "string table index {index} is out of bounds ({})",
-                                self.string_table.s.len()
-                            )))
+                            Err(Error::LogicError(format!("string at index {index} is not valid UTF-8")))
                         }
                     } else {
-                        Err(Error::LogicError(format!("string table index {index} is invalid")))
+                        Err(Error::LogicError(format!(
+                            "string table index {index} is out of bounds ({})",
+                            self.string_table.s.len()
+                        )))
                     }
                 };
 
@@ -450,7 +448,7 @@ where
     }
 }
 
-impl<'a, T> Iterator for DeltaValueReader<'a, T>
+impl<T> Iterator for DeltaValueReader<'_, T>
 where
     T: std::ops::AddAssign + std::clone::Clone,
 {
