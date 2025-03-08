@@ -14,6 +14,8 @@
 //!
 //! - [OSM PBF format documentation](https://wiki.openstreetmap.org/wiki/PBF_Format)
 
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "default")]
 use flate2::read::ZlibDecoder;
 
