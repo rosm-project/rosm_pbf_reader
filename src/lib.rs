@@ -446,7 +446,7 @@ where
     }
 }
 
-impl<'a, T> Iterator for DeltaValueReader<'a, T>
+impl<T> Iterator for DeltaValueReader<'_, T>
 where
     T: std::ops::AddAssign + std::clone::Clone,
 {
